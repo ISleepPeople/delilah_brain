@@ -1,0 +1,7 @@
+{"text": "If Home Assistant UI does not load, verify the host is reachable with 'ping <ip>' and confirm the container or service is actually running.", "source": "home_assistant_troubleshooting"}
+{"text": "When Home Assistant behaves strangely after configuration changes, always check the Configuration → Settings → System → Logs section for YAML or integration errors.", "source": "home_assistant_troubleshooting"}
+{"text": "If a specific integration stops working, try reloading the integration, then removing and re-adding it. Many integrations rely on OAuth tokens that can become invalid or expired.", "source": "home_assistant_troubleshooting"}
+{"text": "If automations are not firing, verify their triggers and conditions are correct. Renamed entities or disabled automations are a common cause.", "source": "home_assistant_troubleshooting"}
+{"text": "Use Developer Tools → States in Home Assistant to check current entity states. This is critical when debugging automations based on sensors or switches.", "source": "home_assistant_troubleshooting"}
+{"text": "If the database grows very large, purge old history via Settings → System → Storage, or configure the recorder integration to exclude noisy entities.", "source": "home_assistant_troubleshooting"}
+{"text": "When troubleshooting Home Assistant in Docker, 'docker logs <ha_container>' will often show Python tracebacks or configuration errors that are not visible in the UI.", "source": "home_assistant_troubleshooting"}

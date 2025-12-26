@@ -1,0 +1,6 @@
+{"text": "If Home Assistant becomes unreachable, check whether the host is responding using 'ping <ip>'.", "source": "home_assistant"}
+{"text": "Home Assistant logs are available under Settings → System → Logs or via the container logs if running in Docker.", "source": "home_assistant"}
+{"text": "If Home Assistant is slow or unresponsive, check integrations that spam the event bus or polling-based devices.", "source": "home_assistant"}
+{"text": "If an integration stops working, remove and re-add it. Many HA integrations cache stale authentication tokens.", "source": "home_assistant"}
+{"text": "Yaml configuration changes require a reload or restart of Home Assistant to take effect.", "source": "home_assistant"}
+{"text": "Automations failing silently often indicate missing entity IDs or renamed devices.", "source": "home_assistant"}

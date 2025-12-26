@@ -1,0 +1,364 @@
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Optional
+from datetime import datetime
+import os
+
+from langchain_community.llms import Ollama
+from langchain_community.embeddings import OllamaEmbeddings
+from langchain_community.vectorstores import Qdrant as QdrantVectorStore
+from qdrant_client import QdrantClient
+from qdrant_client.http import models as qmodels
+from qdrant_client.http.exceptions import UnexpectedResponse
+
+from orchestrator import build_simple_graph, BrainState
+
+app = FastAPI(title="Delilah Brain", version="0.9.0")
+
+# --------------------------------------------------------------------
+# CONFIG
+# --------------------------------------------------------------------
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
+QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
+
+CHAT_MODEL = os.getenv("DELILAH_CHAT_MODEL", "llama3:8b")
+EMBED_MODEL = os.getenv("DELILAH_EMBED_MODEL", CHAT_MODEL)
+
+COLLECTION_NAME = os.getenv("DELILAH_COLLECTION", "delilah_knowledge")
+ROUTER_HINTS_COLLECTION = os.getenv("DELILAH_ROUTER_HINTS_COLLECTION", "router_hints")
+PERSONA_COLLECTION = os.getenv("DELILAH_PERSONA_COLLECTION", "persona_memory")
+CONV_COLLECTION_NAME = os.getenv("DELILAH_CONV_COLLECTION", "conversation_memory")
+
+# matches llama3:8b embeddings
+EMBED_DIM = int(os.getenv("DELILAH_EMBED_DIM", "4096"))
+
+# --------------------------------------------------------------------
+# MODELS
+# --------------------------------------------------------------------
+llm = Ollama(base_url=OLLAMA_URL, model=CHAT_MODEL)
+embeddings = OllamaEmbeddings(base_url=OLLAMA_URL, model=EMBED_MODEL)
+
+# --------------------------------------------------------------------
+# QDRANT SETUP
+# --------------------------------------------------------------------
+client = QdrantClient(url=QDRANT_URL)
+
+# Main long-term knowledge collection
+try:
+    client.create_collection(
+        collection_name=COLLECTION_NAME,
+        vectors_config=qmodels.VectorParams(
+            size=EMBED_DIM,
+            distance=qmodels.Distance.COSINE,
+        ),
+    )
+except UnexpectedResponse as e:
+    if "already exists" in str(e):
+        print(
+            f"[Delilah Brain] Collection '{COLLECTION_NAME}' already exists, continuing.",
+            flush=True,
+        )
+    else:
+        print(
+            f"[Delilah Brain] Qdrant init warning for '{COLLECTION_NAME}': {e}",
+            flush=True,
+        )
+except Exception as e:
+    print(
+        f"[Delilah Brain] General Qdrant init warning for '{COLLECTION_NAME}': {e}",
+        flush=True,
+    )
+
+# We assume router_hints, persona_memory, and conversation_memory are created via HTTP API.
+
+vector_store = QdrantVectorStore(
+    client=client,
+    collection_name=COLLECTION_NAME,
+    embeddings=embeddings,
+)
+
+# Separate store for conversation history
+conv_store = QdrantVectorStore(
+    client=client,
+    collection_name=CONV_COLLECTION_NAME,
+    embeddings=embeddings,
+)
+
+
+def store_conversation_turn(user_id: str, user_text: str, assistant_text: str) -> None:
+    """
+    Log a single user<->assistant turn into the conversation_memory collection.
+    Step 1: logging only. We'll use this for better context later.
+    """
+    try:
+        now = datetime.utcnow().isoformat() + "Z"
+        texts = [
+            f"role:user\nuser_id:{user_id}\ntimestamp:{now}\n\n{user_text}",
+            f"role:assistant\nuser_id:{user_id}\ntimestamp:{now}\n\n{assistant_text}",
+        ]
+        metadatas = [
+            {"user_id": user_id, "role": "user", "timestamp": now},
+            {"user_id": user_id, "role": "assistant", "timestamp": now},
+        ]
+        conv_store.add_texts(texts=texts, metadatas=metadatas)
+    except Exception as e:
+        print(f"[Delilah Brain] conversation_memory warning: {e}", flush=True)
+
+def retrieve_conversation_context(user_id: str, query_text: str, k: int = 6) -> str:
+    """
+    Retrieve relevant prior turns for this user from conversation_memory.
+    We keep it safe and simple: similarity search over stored conversation snippets.
+    """
+    try:
+        # Encode user_id into the query so results skew toward that user's stored turns.
+        q = f"user_id={user_id}\nquery={query_text}"
+        docs = conv_store.similarity_search(q, k=k)
+        if not docs:
+            return ""
+        return "\n".join(d.page_content for d in docs)
+    except Exception as e:
+        print(f"[Delilah Brain] conversation_memory retrieval warning: {e}", flush=True)
+        return ""
+
+
+
+def retrieve_recent_conversation_context(user_id: str, limit: int = 10) -> str:
+    """
+    Pull the most recent turns for THIS user from Qdrant conversation_memory.
+
+    Policy:
+    - Use Qdrant scroll with metadata.user_id filter (no embeddings / no similarity).
+    - Sort locally by timestamp (ISO8601 Z) and return the newest `limit` messages.
+    - Return plain text transcript blocks (role/user_id/timestamp + text) for prompt injection.
+    """
+    try:
+        flt = qmodels.Filter(
+            must=[
+                qmodels.FieldCondition(
+                    key="metadata.user_id",
+                    match=qmodels.MatchValue(value=user_id),
+                )
+            ]
+        )
+
+        points, _ = client.scroll(
+            collection_name=CONV_COLLECTION_NAME,
+            scroll_filter=flt,
+            limit=max(50, limit * 4),   # grab a bit extra, then sort locally
+            with_payload=True,
+            with_vectors=False,
+        )
+
+        if not points:
+            return ""
+
+        def ts(pt):
+            try:
+                md = (pt.payload or {}).get("metadata") or {}
+                return md.get("timestamp") or ""
+            except Exception:
+                return ""
+
+        # Sort oldest -> newest, then take last N and return oldest->newest for readability
+        points = sorted(points, key=ts)
+        points = points[-limit:]
+
+        chunks = []
+        for pt in points:
+            payload = pt.payload or {}
+            page = payload.get("page_content")
+            if page:
+                chunks.append(page)
+
+        return "\n\n".join(chunks)
+    except Exception:
+        return ""
+
+
+
+def should_use_conversation_context(user_text: str) -> bool:
+    """
+    Policy B: only inject conversation context when it is likely useful.
+    Conservative heuristic (fast, local, no extra model calls):
+    - YES for explicit memory/reference language.
+    - NO for simple one-shot factual questions, greetings, or tool queries.
+    """
+    t = (user_text or "").strip().lower()
+    if not t:
+        return False
+
+    # Explicit callbacks to past conversation
+    yes_phrases = [
+        "remember", "remind me", "what did i say", "what did we say",
+        "earlier", "previous", "last time", "yesterday", "before",
+        "we talked", "you said", "i said", "as we discussed", "recall"
+    ]
+    if any(p in t for p in yes_phrases):
+        return True
+
+    # Small talk / one-shot queries usually don't need memory
+    no_phrases = [
+        "weather", "temperature", "forecast",
+        "score", "schedule", "game time", "kickoff",
+        "time is it", "what time", "define", "what is", "who is"
+    ]
+    if any(p in t for p in no_phrases):
+        return False
+
+    # If the user asks for preferences/identity, memory can help
+    pref_phrases = ["my favorite", "my preference", "do i like", "what do i like", "about me"]
+    if any(p in t for p in pref_phrases):
+        return True
+
+    # Default: do not inject
+    return False
+
+@app.post("/ask")
+async def ask_brain(query: Query):
+
+    used_conversation_context = False
+    conversation_context_text = ""
+
+    """
+    Main reasoning endpoint:
+    Delegates to the LangGraph-based brain_graph.
+    Also logs user/assistant turns into conversation_memory, and recalls recent turns.
+    """
+    try:
+        # Recent conversation recall (non-stateless)
+        convo = retrieve_recent_conversation_context(query.user_id, limit=10)
+
+        # Policy B gate: only inject convo when it is likely relevant
+        if convo and should_use_conversation_context(query.text):
+            conversation_context_text = convo
+            used_conversation_context = True
+        else:
+            conversation_context_text = ""
+            used_conversation_context = False
+
+        initial_state: BrainState = {
+            "text": query.text,
+            "user_id": query.user_id,
+            # Policy B: only inject convo when deemed relevant
+            "context": conversation_context_text,
+            # "used_context" should reflect RAG usage (set/overwritten inside orchestrator)
+            "used_context": False,
+
+            "num_docs": 0,
+            "answer": "",
+            # Keep these aligned with the Policy B decision
+            "conversation_context": conversation_context_text,
+            "used_conversation_context": used_conversation_context,
+        }
+
+        # ?? DO NOT setdefault after this point
+
+
+
+
+        result = brain_graph.invoke(initial_state)
+
+        answer_text = result.get("answer") or result.get("text") or ""
+
+        # Log this turn into conversation_memory (for future conversational context).
+        store_conversation_turn(query.user_id, query.text, answer_text)
+
+        return {
+            "text": answer_text,
+            "source": "rag_llm_graph",
+            "used_context": bool(result.get("used_context")),
+            "used_conversation_context": bool(result.get("used_conversation_context")),
+
+            "num_docs": int(result.get("num_docs") or 0),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Brain error: {e}")
+
+
+@app.post("/ingest")
+async def ingest_memory(payload: IngestRequest):
+    """
+    Ingest a list of 'confirmed facts' into Qdrant so Delilah can recall them later.
+    """
+    if not payload.texts:
+        raise HTTPException(status_code=400, detail="No texts provided for ingestion.")
+
+    try:
+        metadatas = [
+            {
+                "user_id": payload.user_id,
+                "source": payload.source,
+                "index": i,
+            }
+            for i, _ in enumerate(payload.texts)
+        ]
+        vector_store.add_texts(texts=payload.texts, metadatas=metadatas)
+        return {
+            "status": "ok",
+            "inserted": len(payload.texts),
+            "collection": COLLECTION_NAME,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ingest error: {e}")
+
+
+@app.post("/router_hint")
+async def add_router_hint(payload: RouterHintRequest):
+    """
+    Store a router hint into the 'router_hints' collection.
+
+    This is how we teach Delilah that certain phrases / patterns
+    should map to specific experts (e.g. medical, coding, home, etc).
+
+    Later, n8n or OVOS can call this *same* endpoint; no need to redo it.
+    """
+    try:
+        metadata = {
+            "user_id": payload.user_id,
+            "target_expert": payload.target_expert,
+            "notes": payload.notes,
+            "source": payload.source,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+        }
+        router_hints_vector_store.add_texts(
+            texts=[payload.text],
+            metadatas=[metadata],
+        )
+        return {
+            "status": "ok",
+            "inserted": 1,
+            "collection": ROUTER_HINTS_COLLECTION,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Router hint error: {e}")
+
+
+@app.post("/persona_memory")
+async def add_persona_memory(payload: PersonaMemoryRequest):
+    """
+    Store persona-related information into the 'persona_memory' collection.
+
+    This is how we teach Delilah about tone, mood, style, and long-term persona traits.
+    The orchestrator uses this to shape Delilah's voice and emotional state.
+    """
+    try:
+        metadata = {
+            "user_id": payload.user_id,
+            "mood": payload.mood,
+            "style": payload.style,
+            "tags": payload.tags,
+            "source": payload.source,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+        }
+        persona_vector_store.add_texts(
+            texts=[payload.text],
+            metadatas=[metadata],
+        )
+        return {
+            "status": "ok",
+            "inserted": 1,
+            "collection": PERSONA_COLLECTION,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Persona memory error: {e}")

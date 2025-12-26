@@ -1,0 +1,22 @@
+# Web / API
+fastapi==0.127.0
+uvicorn[standard]==0.40.0
+requests==2.32.5
+python-dotenv==1.2.1
+pydantic==2.12.5
+PyYAML==6.0.2
+
+# Database
+psycopg[binary]==3.3.2
+
+# Qdrant
+qdrant-client>=1.10.1,<2.0.0
+
+# LangChain family (DO NOT pin langchain-core separately)
+langchain==0.3.27
+langchain-community==0.3.31
+langchain-ollama==0.3.10
+langchain-qdrant==0.2.1
+
+# LangGraph
+langgraph<1.0.0

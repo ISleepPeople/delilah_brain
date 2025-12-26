@@ -1,0 +1,14 @@
+{"text": "When a service is not working, use 'sudo systemctl status <service>' to check if it is active, failed, or waiting. This is usually the first step in debugging a systemd service.", "source": "linux_troubleshooting"}
+{"text": "If a systemd service is failing, use 'journalctl -u <service> -n 100 --no-pager' to see the latest 100 log lines. This often reveals misconfigurations, missing files, or permission errors.", "source": "linux_troubleshooting"}
+{"text": "Use 'df -h' to quickly see if any filesystem is full. A full root filesystem is a common reason for services failing to start or logs not being written.", "source": "linux_troubleshooting"}
+{"text": "Use 'du -sh /path/* | sort -h' to find which folders are taking the most disk space. This is useful when a filesystem is nearly full.", "source": "linux_troubleshooting"}
+{"text": "Use 'sudo dmesg -T | tail -n 50' to look for recent kernel messages. Disk I/O errors, hardware issues, or OOM kills often show up here.", "source": "linux_troubleshooting"}
+{"text": "Use 'sudo ss -tulpn' to list listening TCP and UDP sockets and see which process is bound to a port. This is helpful when a service cannot bind because the port is already in use.", "source": "linux_troubleshooting"}
+{"text": "To debug DNS or connectivity, first 'ping 1.1.1.1' or 'ping 8.8.8.8' to check raw connectivity, then 'ping google.com' to check DNS resolution.", "source": "linux_troubleshooting"}
+{"text": "Use 'resolvectl status' or inspect '/etc/resolv.conf' to see which DNS servers are configured on a systemd-resolved based system.", "source": "linux_troubleshooting"}
+{"text": "For Docker issues, 'docker ps' shows running containers, and 'docker logs <container>' shows that container's logs.", "source": "linux_troubleshooting"}
+{"text": "If a Docker container restarts repeatedly, use 'docker logs --tail 100 <container>' to see the last log lines and identify why it is crashing.", "source": "linux_troubleshooting"}
+{"text": "Use 'htop' or 'top' to check CPU and memory usage when the system feels slow. Look for processes pegging a CPU core or consuming large amounts of RAM.", "source": "linux_troubleshooting"}
+{"text": "If SSH is not responding, check whether the server is reachable with 'ping', and then verify 'sudo systemctl status ssh' on the host.", "source": "linux_troubleshooting"}
+{"text": "When editing important configuration files, it is good practice to create a backup first, e.g. 'cp file.conf file.conf.bak' before changing it.", "source": "linux_troubleshooting"}
+{"text": "Permission problems often manifest as 'Permission denied' or 'EACCES' errors. Use 'ls -l' to inspect permissions and 'sudo chown user:group file' or 'chmod 644 file' to fix them carefully.", "source": "linux_troubleshooting"}

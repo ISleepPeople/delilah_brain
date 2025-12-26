@@ -1,0 +1,7 @@
+{"text": "Open Voice OS (OVOS) Core is responsible for handling skills, intents, and dialog management. It connects to the OVOS messagebus for communication between components.", "source": "ovos_hivemind"}
+{"text": "OVOS Audio handles microphone input and speaker output. It connects to STT (speech-to-text) and TTS (text-to-speech) services such as Whisper or Piper, often via Wyoming-based servers.", "source": "ovos_hivemind"}
+{"text": "HiveMind allows lightweight satellite devices to connect to a central brain over the network. Satellites send audio or intents to the main server running OVOS and the LLM stack.", "source": "ovos_hivemind"}
+{"text": "When OVOS is not responding to voice, check that the messagebus is running and that OVOS Core, OVOS Audio, and any STT/TTS services can connect to it.", "source": "ovos_hivemind"}
+{"text": "If wake word detection stops working, verify the wake word service or plugin is running, the microphone is detected, and input levels are not muted or too low.", "source": "ovos_hivemind"}
+{"text": "For HiveMind satellites, ensure they can reach the main brain host on the correct port and that any firewalls are not blocking traffic.", "source": "ovos_hivemind"}
+{"text": "When debugging OVOS, inspect logs for ovos-core, ovos-audio, and the messagebus. They often reveal missing configuration files, invalid skills, or network errors.", "source": "ovos_hivemind"}

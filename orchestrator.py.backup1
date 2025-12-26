@@ -1,0 +1,77 @@
+from typing import TypedDict
+from langgraph.graph import StateGraph, END
+
+# This is the state that flows through the brain graph
+class BrainState(TypedDict):
+    text: str
+    user_id: str
+    context: str
+    used_context: bool
+    num_docs: int
+    answer: str
+
+def build_simple_graph(llm, vector_store):
+    """Build a minimal graph that does exactly what /ask does today."""
+
+    def rag_llm_node(state: BrainState) -> BrainState:
+        text = state["text"]
+        user_id = state.get("user_id", "unknown")
+
+        # 1. Retrieve context from Qdrant
+        docs = []
+        try:
+            docs = vector_store.similarity_search(text, k=3)
+        except Exception as e:
+            print(f"[Orchestrator] similarity_search warning: {e}", flush=True)
+            docs = []
+
+        context_text = "\n\n".join([d.page_content for d in docs]) if docs else ""
+        used_context = bool(docs)
+
+        # 2. Build prompt (same as /ask for now)
+        system_prompt = f"""
+You are Delilah, a local home assistant running on a private server.
+Answer in a friendly, concise way (ideally 1–3 sentences).
+Use the following memory context if it seems relevant to the user's question.
+If it is not relevant, ignore it.
+MEMORY CONTEXT:
+{context_text or "[no relevant memory]"}
+END OF CONTEXT
+User ({user_id}): {text}
+Delilah:
+""".strip()
+
+        # 3. LLM call
+        answer = llm.invoke(system_prompt)
+
+        # 4. Update state and return
+        state["context"] = context_text
+        state["used_context"] = used_context
+        state["num_docs"] = len(docs)
+        state["answer"] = answer
+        return state
+
+    builder = StateGraph(BrainState)
+    builder.add_node("rag_llm", rag_llm_node)
+    builder.set_entry_point("rag_llm")
+    builder.add_edge("rag_llm", END)
+
+    return builder.compile()
+
+if __name__ == "__main__":
+    # When run as a script, just test the graph once.
+    from main import llm, vector_store
+
+    graph = build_simple_graph(llm, vector_store)
+
+    initial_state: BrainState = {
+        "text": "test from orchestrator",
+        "user_id": "ryan",
+        "context": "",
+        "used_context": False,
+        "num_docs": 0,
+        "answer": "",
+    }
+
+    result = graph.invoke(initial_state)
+    print(result)

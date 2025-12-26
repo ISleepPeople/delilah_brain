@@ -1,0 +1,166 @@
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Optional
+
+from langchain_community.llms import Ollama
+from langchain_community.embeddings import OllamaEmbeddings
+from langchain_community.vectorstores import Qdrant as QdrantVectorStore
+from qdrant_client import QdrantClient
+from qdrant_client.http import models as qmodels
+
+import os
+
+app = FastAPI(title="Delilah Brain", version="0.3.0")
+
+# --------------------------------------------------------------------
+# CONFIG
+# --------------------------------------------------------------------
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
+QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
+
+CHAT_MODEL = os.getenv("DELILAH_CHAT_MODEL", "llama3:8b")
+EMBED_MODEL = os.getenv("DELILAH_EMBED_MODEL", CHAT_MODEL)
+
+COLLECTION_NAME = os.getenv("DELILAH_COLLECTION", "delilah_knowledge")
+EMBED_DIM = int(os.getenv("DELILAH_EMBED_DIM", "4096"))  # matches llama3:8b embeddings
+
+# --------------------------------------------------------------------
+# MODELS
+# --------------------------------------------------------------------
+llm = Ollama(base_url=OLLAMA_URL, model=CHAT_MODEL)
+embeddings = OllamaEmbeddings(base_url=OLLAMA_URL, model=EMBED_MODEL)
+# --------------------------------------------------------------------
+# QDRANT SETUP
+# --------------------------------------------------------------------
+client = QdrantClient(url=QDRANT_URL)
+
+# Create collection if missing (ignore 'already exists' safely)
+try:
+    collections = client.get_collections()
+    existing = [c.name for c in collections.collections]
+
+    if COLLECTION_NAME not in existing:
+        client.create_collection(
+            collection_name=COLLECTION_NAME,
+            vectors_config=qmodels.VectorParams(
+                size=EMBED_DIM,
+                distance=qmodels.Distance.COSINE,
+            ),
+        )
+except Exception as e:
+    # Don't crash the whole app if collection already exists or Qdrant is warming up.
+    print(f"[Delilah Brain] Qdrant init warning: {e}", flush=True)
+
+
+
+# --------------------------------------------------------------------
+# SCHEMAS
+# --------------------------------------------------------------------
+lass Query(BaseModel):
+    text: str
+    user_id: str = "unknown"
+
+
+class IngestRequest(BaseModel):
+    texts: List[str]
+    user_id: str = "unknown"
+    source: Optional[str] = "manual_seed"
+
+
+# --------------------------------------------------------------------
+# ROUTES
+# --------------------------------------------------------------------
+@app.get("/health")
+def health():
+    """Simple health check and basic Qdrant info."""
+    try:
+        coll = client.get_collection(COLLECTION_NAME)
+        return {
+            "status": "ok",
+            "collection": COLLECTION_NAME,
+            "vectors_count": getattr(coll, "vectors_count", None),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Health check failed: {e}")
+
+
+@app.post("/ask")
+async def ask_brain(query: Query):
+    """
+    Main reasoning endpoint:
+    1. Retrieve context from Qdrant (if any)
+    2. Prompt Llama 3 with that context
+    3. Return a speech-ready answer
+    """
+    try:
+        # 1. Retrieve context
+        docs = []
+        try:
+            docs = vector_store.similarity_search(query.text, k=3)
+        except Exception:
+            docs = []
+
+        context_text = "\n\n".join([d.page_content for d in docs]) if docs else ""
+        used_context = bool(docs)
+
+        # 2. Build prompt
+        system_prompt = f"""
+You are Delilah, a local home assistant running on a private server.
+Answer in a friendly, concise way (ideally 1–3 sentences).
+
+Use the following memory context if it seems relevant to the user's question.
+If it is not relevant, ignore it.
+
+MEMORY CONTEXT:
+{context_text or "[no relevant memory]"}
+END OF CONTEXT
+
+User ({query.user_id}): {query.text}
+Delilah:
+""".strip()
+
+        # 3. LLM call
+        answer = llm.invoke(system_prompt)
+
+        return {
+            "text": answer,
+            "source": "rag_llm",
+            "used_context": used_context,
+            "num_docs": len(docs),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Brain error: {e}")
+
+
+@app.post("/ingest")
+async def ingest_memory(payload: IngestRequest):
+    """
+    Ingest a list of 'confirmed facts' into Qdrant so Delilah can recall them later.
+    """
+    if not payload.texts:
+        raise HTTPException(status_code=400, detail="No texts provided for ingestion.")
+
+    try:
+        metadatas = [
+            {
+                "user_id": payload.user_id,
+                "source": payload.source,
+                "index": i,
+            }
+            for i, _ in enumerate(payload.texts)
+        ]
+
+        vector_store.add_texts(texts=payload.texts, metadatas=metadatas)
+
+        return {
+            "status": "ok",
+            "inserted": len(payload.texts),
+            "collection": COLLECTION_NAME,
+            "user_id": payload.user_id,
+            "source": payload.source,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ingest failed: {e}")
+

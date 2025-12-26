@@ -1,0 +1,16 @@
+services:
+  delilah_postgres:
+    image: postgres:16
+    container_name: delilah_postgres
+    environment:
+      - POSTGRES_DB=delilah
+      - POSTGRES_USER=delilah
+      - POSTGRES_PASSWORD=delilah_change_me
+    ports:
+      - "5432:5432"
+    volumes:
+      - delilah_postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  delilah_postgres_data:

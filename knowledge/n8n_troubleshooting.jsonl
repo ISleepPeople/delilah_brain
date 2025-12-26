@@ -1,0 +1,9 @@
+{"text": "If an n8n workflow is not firing, first check whether it has an active trigger node such as Webhook, Cron, or Interval. A workflow with only regular nodes will never start by itself.", "source": "n8n_troubleshooting"}
+{"text": "For a webhook-triggered workflow in n8n, make sure the HTTP method, path, and authentication in your external caller match exactly what the Webhook node expects.", "source": "n8n_troubleshooting"}
+{"text": "If a workflow runs in test mode but not in production, verify the workflow is set to 'Active' in n8n. Inactive workflows will not respond to real webhooks or triggers.", "source": "n8n_troubleshooting"}
+{"text": "Use the Executions view in n8n to see past workflow runs. Failed executions usually show node-level error messages that point directly to the misconfigured node.", "source": "n8n_troubleshooting"}
+{"text": "Credential issues are common in n8n. If an HTTP Request or API node fails, check that the credentials are created, correctly scoped, and actually selected in the node configuration.", "source": "n8n_troubleshooting"}
+{"text": "When a workflow becomes complicated, it helps to use the 'No Operation' or 'Merge' nodes to keep data flow clear, and to name nodes descriptively for easier debugging later.", "source": "n8n_troubleshooting"}
+{"text": "If n8n feels slow, check the underlying container resources: CPU, RAM, and I/O. A busy database or slow disk can delay workflow executions.", "source": "n8n_troubleshooting"}
+{"text": "Before upgrading n8n, it is good practice to export critical workflows or back up the n8n database so you can roll back if something breaks.", "source": "n8n_troubleshooting"}
+{"text": "When calling back into Delilah's Brain API from n8n, use clear JSON schemas and consistent field names like 'text', 'user_id', and 'source' so that memory ingestion remains predictable.", "source": "n8n_troubleshooting"}

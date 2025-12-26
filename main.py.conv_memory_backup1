@@ -1,0 +1,255 @@
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Optional
+from langchain_community.llms import Ollama
+from langchain_community.embeddings import OllamaEmbeddings
+from langchain_community.vectorstores import Qdrant as QdrantVectorStore
+from qdrant_client import QdrantClient
+from qdrant_client.http import models as qmodels
+from qdrant_client.http.exceptions import UnexpectedResponse
+from datetime import datetime
+import os
+
+from orchestrator import build_simple_graph, BrainState
+
+app = FastAPI(title="Delilah Brain", version="0.9.0")
+
+# --------------------------------------------------------------------
+# CONFIG
+# --------------------------------------------------------------------
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://ollama:11434")
+QDRANT_URL = os.getenv("QDRANT_URL", "http://qdrant:6333")
+CHAT_MODEL = os.getenv("DELILAH_CHAT_MODEL", "llama3:8b")
+EMBED_MODEL = os.getenv("DELILAH_EMBED_MODEL", CHAT_MODEL)
+COLLECTION_NAME = os.getenv("DELILAH_COLLECTION", "delilah_knowledge")
+ROUTER_HINTS_COLLECTION = os.getenv("DELILAH_ROUTER_HINTS_COLLECTION", "router_hints")
+PERSONA_COLLECTION = os.getenv("DELILAH_PERSONA_COLLECTION", "persona_memory")
+EMBED_DIM = int(os.getenv("DELILAH_EMBED_DIM", "4096"))  # matches llama3:8b embeddings
+
+# --------------------------------------------------------------------
+# MODELS
+# --------------------------------------------------------------------
+llm = Ollama(base_url=OLLAMA_URL, model=CHAT_MODEL)
+embeddings = OllamaEmbeddings(base_url=OLLAMA_URL, model=EMBED_MODEL)
+
+# --------------------------------------------------------------------
+# QDRANT SETUP
+# --------------------------------------------------------------------
+client = QdrantClient(url=QDRANT_URL)
+
+# Create main knowledge collection if missing (ignore "already exists" safely)
+try:
+    client.create_collection(
+        collection_name=COLLECTION_NAME,
+        vectors_config=qmodels.VectorParams(
+            size=EMBED_DIM,
+            distance=qmodels.Distance.COSINE,
+        ),
+    )
+except UnexpectedResponse as e:
+    # HTTP 409 when collection already exists
+    if "already exists" in str(e):
+        print(f"[Delilah Brain] Collection '{COLLECTION_NAME}' already exists, continuing.", flush=True)
+    else:
+        print(f"[Delilah Brain] Qdrant init warning for '{COLLECTION_NAME}': {e}", flush=True)
+except Exception as e:
+    # Don't crash the whole app if Qdrant is not ready yet
+    print(f"[Delilah Brain] General Qdrant init warning for '{COLLECTION_NAME}': {e}", flush=True)
+
+# NOTE: We assume 'router_hints' and 'persona_memory' collections already exist
+# (created via Qdrant HTTP API). If they don't, similarity_search will just log a warning.
+
+vector_store = QdrantVectorStore(
+    client=client,
+    collection_name=COLLECTION_NAME,
+    embeddings=embeddings,
+)
+
+router_hints_vector_store = QdrantVectorStore(
+    client=client,
+    collection_name=ROUTER_HINTS_COLLECTION,
+    embeddings=embeddings,
+)
+
+persona_vector_store = QdrantVectorStore(
+    client=client,
+    collection_name=PERSONA_COLLECTION,
+    embeddings=embeddings,
+)
+
+# --------------------------------------------------------------------
+# ORCHESTRATOR GRAPH
+# --------------------------------------------------------------------
+#Right now this graph just replicates the old /ask RAG+LLM behavior,
+# but it also queries router_hints and persona_memory (for logging only, at this stage).
+brain_graph = build_simple_graph(
+    llm,
+    vector_store,
+    router_hints_store=router_hints_vector_store,
+    persona_store=persona_vector_store,
+)
+
+# --------------------------------------------------------------------
+# SCHEMAS
+# --------------------------------------------------------------------
+class Query(BaseModel):
+    text: str
+    user_id: str = "unknown"
+
+
+class IngestRequest(BaseModel):
+    texts: List[str]
+    user_id: str = "unknown"
+    source: Optional[str] = "manual_seed"
+
+
+class RouterHintRequest(BaseModel):
+    text: str
+    user_id: str = "unknown"
+    target_expert: str
+    notes: Optional[str] = None
+    source: Optional[str] = "router_hint_manual"
+
+
+class PersonaMemoryRequest(BaseModel):
+    text: str
+    user_id: str = "unknown"
+    mood: Optional[str] = None
+    style: Optional[str] = None
+    tags: Optional[List[str]] = None
+    source: Optional[str] = "persona_manual"
+
+
+# --------------------------------------------------------------------
+# ROUTES
+# --------------------------------------------------------------------
+@app.get("/health")
+def health():
+    """
+    Simple health check.
+    We *don't* call Qdrant here anymore to avoid version/validation issues.
+    """
+    return {
+        "status": "ok",
+        "collection": COLLECTION_NAME,
+        "router_hints_collection": ROUTER_HINTS_COLLECTION,
+        "persona_collection": PERSONA_COLLECTION,
+    }
+
+
+@app.post("/ask")
+async def ask_brain(query: Query):
+    """
+    Main reasoning endpoint:
+    Delegates to the LangGraph-based brain_graph, which currently
+    implements the same RAG+LLM behavior as the old inline version,
+    plus optional router_hints and persona_memory lookups (logging only for now).
+    """
+    try:
+        initial_state: BrainState = {
+            "text": query.text,
+            "user_id": query.user_id,
+            "context": "",
+            "used_context": False,
+            "num_docs": 0,
+            "answer": "",
+        }
+
+        result = brain_graph.invoke(initial_state)
+
+        return {
+            "text": result["answer"],
+            "source": "rag_llm_graph",
+            "used_context": result["used_context"],
+            "num_docs": result["num_docs"],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Brain error: {e}")
+
+
+@app.post("/ingest")
+async def ingest_memory(payload: IngestRequest):
+    """
+    Ingest a list of 'confirmed facts' into Qdrant so Delilah can recall them later.
+    """
+    if not payload.texts:
+        raise HTTPException(status_code=400, detail="No texts provided for ingestion.")
+
+    try:
+        metadatas = [
+            {
+                "user_id": payload.user_id,
+                "source": payload.source,
+                "index": i,
+            }
+            for i, _ in enumerate(payload.texts)
+        ]
+        vector_store.add_texts(texts=payload.texts, metadatas=metadatas)
+        return {
+            "status": "ok",
+            "inserted": len(payload.texts),
+            "collection": COLLECTION_NAME,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ingest error: {e}")
+
+
+@app.post("/router_hint")
+async def add_router_hint(payload: RouterHintRequest):
+    """
+    Store a router hint into the 'router_hints' collection.
+
+    This is how we teach Delilah that certain phrases / patterns
+    should map to specific experts (e.g. medical, coding, home, etc).
+
+    Later, n8n or OVOS can call this *same* endpoint; no need to redo it.
+    """
+    try:
+        metadata = {
+            "user_id": payload.user_id,
+            "target_expert": payload.target_expert,
+            "notes": payload.notes,
+            "source": payload.source,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+        }
+        router_hints_vector_store.add_texts(
+            texts=[payload.text],
+            metadatas=[metadata],
+        )
+        return {
+            "status": "ok",
+            "inserted": 1,
+            "collection": ROUTER_HINTS_COLLECTION,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Router hint error: {e}")
+
+
+@app.post("/persona_memory")
+async def add_persona_memory(payload: PersonaMemoryRequest):
+    """
+    Store persona-related information into the 'persona_memory' collection.
+
+    This is how we teach Delilah about tone, mood, style, and long-term persona traits.
+    Later, the orchestrator will use this to shape Delilah's voice and emotional state.
+    """
+    try:
+        metadata = {
+            "user_id": payload.user_id,
+            "mood": payload.mood,
+            "style": payload.style,
+            "tags": payload.tags,
+            "source": payload.source,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+        }
+        persona_vector_store.add_texts(
+            texts=[payload.text],
+            metadatas=[metadata],
+        )
+        return {
+            "status": "ok",
+            "inserted": 1,
+            "collection": PERSONA_COLLECTION,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Persona memory error: {e}")

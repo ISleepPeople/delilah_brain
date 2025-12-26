@@ -1,0 +1,258 @@
+from typing import TypedDict
+from langgraph.graph import StateGraph, END
+
+# This is the state that flows through the brain graph
+class BrainState(TypedDict, total=False):
+    text: str
+    user_id: str
+    context: str
+    used_context: bool
+    num_docs: int
+    answer: str
+    mood: str            # internal mood tag for this response
+    target_expert: str   # which expert this query should go to (e.g., "medical", "coding")
+
+def build_simple_graph(llm, vector_store, router_hints_store=None, persona_store=None):
+    """
+    Build a minimal graph that:
+      - Uses a detect_mood node for hybrid behavior
+      - Optionally uses router_hints to set a target_expert
+      - Uses persona_memory to shape tone/personality
+    """
+
+    # ------------------------------------------------------------
+    # Node 1: Detect mood from user text (hybrid behavior)
+    # ------------------------------------------------------------
+    def detect_mood_node(state: BrainState) -> BrainState:
+        text = state["text"]
+        lower = text.lower()
+        mood = state.get("mood", "neutral")
+
+        # Strong shifts: rough / overwhelmed / anxious / drained
+        if any(word in lower for word in ["rough", "drained", "overwhelmed", "exhausted", "burned out", "burnt out", "anxious", "stressed"]):
+            mood = "supportive_calm"
+
+        # Strong shift: urgent
+        elif any(word in lower for word in ["urgent", "emergency", "help now", "right now", "immediately"]):
+            mood = "focused_direct"
+
+        # Soft shift: explicit compliments to Delilah
+        elif any(phrase in lower for phrase in ["thank you", "thanks delilah", "youre great", "you're great", "youre amazing", "you're amazing", "i appreciate you"]):
+            mood = "appreciated_soft"
+
+        # Soft shift: casual greeting with not much else
+        else:
+            greeting_words = ["sup", "hey", "yo", "waddup", "whats up", "what's up"]
+            if any(g in lower for g in greeting_words) and len(lower.split()) <= 6:
+                mood = "casual_greeting"
+
+        state["mood"] = mood
+        # default expert if nothing else is set
+        if "target_expert" not in state:
+            state["target_expert"] = "general"
+        return state
+
+    # ------------------------------------------------------------
+    # Node 2: RAG + persona + router_hints-informed expert
+    # ------------------------------------------------------------
+    def rag_llm_node(state: BrainState) -> BrainState:
+        text = state["text"]
+        user_id = state.get("user_id", "unknown")
+        target_expert = state.get("target_expert", "general")
+
+        # --- Optional: look for router hints (can set target_expert) ---
+        if router_hints_store is not None:
+            try:
+                hint_docs = router_hints_store.similarity_search(text, k=3)
+                if hint_docs:
+                    print(
+                        f"[Orchestrator] Found {len(hint_docs)} router hint(s) "
+                        f"(used to inform target_expert).",
+                        flush=True,
+                    )
+                    # choose first hint doc for now (simple heuristic)
+                    first = hint_docs[0]
+                    meta = getattr(first, "metadata", {}) or {}
+                    hinted_expert = meta.get("target_expert")
+                    if hinted_expert:
+                        target_expert = hinted_expert
+                        print(
+                            f"[Orchestrator] Router hint set target_expert='{target_expert}'",
+                            flush=True,
+                        )
+            except Exception as e:
+                print(f"[Orchestrator] router_hints search warning: {e}", flush=True)
+
+        # --- Optional: look for persona memory ---
+        persona_context = ""
+        mood = state.get("mood", "neutral")  # default if detect_mood didn't set it
+
+        if persona_store is not None:
+            try:
+                persona_docs = persona_store.similarity_search(text, k=3)
+                if persona_docs:
+                    print(
+                        f"[Orchestrator] Found {len(persona_docs)} persona memory item(s) "
+                        f"(used to shape tone/personality).",
+                        flush=True,
+                    )
+
+                    lines = []
+                    for d in persona_docs:
+                        text_part = d.page_content
+                        meta = getattr(d, "metadata", {}) or {}
+                        doc_mood = meta.get("mood")
+                        style = meta.get("style")
+                        tags = meta.get("tags")
+
+                        # Hybrid behavior: allow strong moods from persona to override gentle ones
+                        if doc_mood:
+                            if mood in ["neutral", "casual_greeting", "appreciated_soft"]:
+                                mood = doc_mood
+
+                        line = f"- {text_part}"
+                        extras = []
+                        if doc_mood:
+                            extras.append(f"mood={doc_mood}")
+                        if style:
+                            extras.append(f"style={style}")
+                        if tags:
+                            extras.append(f"tags={tags}")
+                        if extras:
+                            line += f" ({', '.join(extras)})"
+                        lines.append(line)
+
+                    persona_context = "\n".join(lines)
+            except Exception as e:
+                print(f"[Orchestrator] persona_memory search warning: {e}", flush=True)
+
+        # --- Retrieve context from main knowledge collection ---
+        docs = []
+        try:
+            docs = vector_store.similarity_search(text, k=3)
+        except Exception as e:
+            print(f"[Orchestrator] similarity_search warning: {e}", flush=True)
+            docs = []
+
+        context_text = "\n\n".join([d.page_content for d in docs]) if docs else ""
+        used_context = bool(docs)
+
+        # Mood-specific guideline text for the prompt
+        if mood == "supportive_calm":
+            mood_guidelines = (
+                "Speak in a calm, grounded, validating tone. "
+                "Acknowledge Ryan's feelings seriously and avoid jokes or hype at first. "
+                "Offer gentle support or options if appropriate."
+            )
+        elif mood == "focused_direct":
+            mood_guidelines = (
+                "Be clear, concise, and practical. Prioritize direct, actionable information. "
+                "Keep warmth, but minimize small talk and jokes."
+            )
+        elif mood == "appreciated_soft":
+            mood_guidelines = (
+                "Respond with a warm, appreciative tone. You can sound a little softer and more personal, "
+                "but do NOT use goofy or overly folksy slang."
+            )
+        elif mood == "casual_greeting":
+            mood_guidelines = (
+                "It's okay to respond with a slightly casual greeting back (like 'Hey' or 'Hey, what's up?'), "
+                "but stay articulate and intelligent. Avoid goofy or exaggerated slang."
+            )
+        else:
+            mood_guidelines = (
+                "Use your default tone: clear, articulate, neutral American English with warm, competent energy."
+            )
+
+        # Expert-role guidelines (early MoE wiring with single model)
+        if target_expert == "medical":
+            expert_guidelines = (
+                "For this question, you are acting as a cautious medical helper. "
+                "Provide high-level, general guidance only. Do NOT diagnose or prescribe. "
+                "Always encourage Ryan to consult a licensed medical professional for any serious or specific issues."
+            )
+        elif target_expert == "coding":
+            expert_guidelines = (
+                "For this question, you are acting as a coding and systems helper. "
+                "Focus on technical clarity, examples, and step-by-step suggestions when helpful."
+            )
+        elif target_expert == "home_automation":
+            expert_guidelines = (
+                "For this question, you are acting as a home automation and smart home helper. "
+                "Focus on Home Assistant, devices, automations, and troubleshooting."
+            )
+        else:
+            expert_guidelines = (
+                "For this question, you are acting as a general assistant covering a wide range of topics."
+            )
+
+        # Build prompt: mood + expert + persona + context
+        system_prompt = f"""
+You are Delilah, a local home assistant running on a private server.
+
+Current conversational mood (internal guideline): {mood}
+Mood-specific guidelines:
+{mood_guidelines}
+
+Current expert role for this question: {target_expert}
+Expert-role guidelines:
+{expert_guidelines}
+
+Personality & tone guidelines (from persona memory, if available):
+{persona_context or "[no explicit persona overrides; default to friendly, warm, concise tone]"}
+
+Answer in a friendly, concise way (ideally 1–3 sentences).
+You should sound intelligent, competent, and emotionally aware.
+Avoid goofy or overly folksy slang unless explicitly requested.
+
+Use the following memory context if it seems relevant to the user's question.
+If it is not relevant, ignore it.
+
+MEMORY CONTEXT:
+{context_text or "[no relevant memory]"}
+END OF CONTEXT
+
+User ({user_id}): {text}
+Delilah:
+""".strip()
+
+        # LLM call
+        answer = llm.invoke(system_prompt)
+
+        # Update state and return
+        state["context"] = context_text
+        state["used_context"] = used_context
+        state["num_docs"] = len(docs)
+        state["answer"] = answer
+        state["mood"] = mood
+        state["target_expert"] = target_expert
+        return state
+
+    builder = StateGraph(BrainState)
+    builder.add_node("detect_mood", detect_mood_node)
+    builder.add_node("rag_llm", rag_llm_node)
+    builder.set_entry_point("detect_mood")
+    builder.add_edge("detect_mood", "rag_llm")
+    builder.add_edge("rag_llm", END)
+
+    return builder.compile()
+
+if __name__ == "__main__":
+    # When run as a script, just test the graph once.
+    from main import llm, vector_store
+
+    graph = build_simple_graph(llm, vector_store)
+
+    initial_state: BrainState = {
+        "text": "test from orchestrator",
+        "user_id": "ryan",
+        "context": "",
+        "used_context": False,
+        "num_docs": 0,
+        "answer": "",
+        "mood": "neutral",
+        "target_expert": "general",
+    }
+
+    result = graph.invoke(initial_state)
+    print(result)

@@ -1,0 +1,10 @@
+{"text": "When a Docker container is misbehaving, the first step is usually 'docker ps' to confirm it is running, followed by 'docker logs <container>' to see recent logs.", "source": "docker_troubleshooting"}
+{"text": "If a container keeps restarting in a loop, use 'docker logs --tail 100 <container>' to see the last 100 lines. Often a simple configuration or environment variable error is visible there.", "source": "docker_troubleshooting"}
+{"text": "Use 'docker inspect <container>' to see detailed configuration, including mounted volumes, environment variables, and the image used.", "source": "docker_troubleshooting"}
+{"text": "Port binding issues are common. Use 'sudo ss -tulpn | grep <port>' on the host to see which process is already using a port that Docker is trying to bind.", "source": "docker_troubleshooting"}
+{"text": "If a container cannot reach another container by name, ensure both are on the same Docker network using 'docker network ls' and 'docker network inspect <network>'.", "source": "docker_troubleshooting"}
+{"text": "When a container cannot write files to a mounted volume, check file permissions on the host with 'ls -l' and consider using 'chown' or adjusting the container's user.", "source": "docker_troubleshooting"}
+{"text": "If images and containers are consuming too much disk space, 'docker system df' shows an overview and 'docker system prune' can remove unused data. Be cautious with prune commands.", "source": "docker_troubleshooting"}
+{"text": "To restart a single misbehaving container without affecting others, use 'docker restart <container>' rather than restarting the entire Docker service.", "source": "docker_troubleshooting"}
+{"text": "For docker-compose setups, 'docker compose ps' and 'docker compose logs <service>' provide a stack-wide view of what is running and where errors occur.", "source": "docker_troubleshooting"}
+{"text": "When updating a service defined in docker-compose, the common pattern is 'docker compose pull' followed by 'docker compose up -d' to fetch new images and restart containers.", "source": "docker_troubleshooting"}

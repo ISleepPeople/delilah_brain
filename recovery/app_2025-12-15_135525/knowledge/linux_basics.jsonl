@@ -1,0 +1,10 @@
+{"text": "The command 'ls -l' lists files in long format, showing permissions, ownership, and timestamps.", "source": "linux_basics"}
+{"text": "The command 'cd /path' changes the working directory. The command 'cd ..' goes up one directory.", "source": "linux_basics"}
+{"text": "The command 'sudo systemctl status <service>' shows the status of a systemd service.", "source": "linux_basics"}
+{"text": "The command 'journalctl -u <service>' displays logs for a specific systemd service.", "source": "linux_basics"}
+{"text": "The command 'htop' shows an interactive CPU and memory monitoring interface.", "source": "linux_basics"}
+{"text": "The file '/etc/hosts' maps hostnames to IP addresses on the local machine.", "source": "linux_basics"}
+{"text": "The directory '/var/log' contains most system-level logs.", "source": "linux_basics"}
+{"text": "The command 'df -h' displays disk usage in a human-readable format.", "source": "linux_basics"}
+{"text": "The command 'du -sh <folder>' shows the total disk usage of a folder.", "source": "linux_basics"}
+{"text": "The command 'chmod 755 <file>' updates file permissions. 'chown user:group <file>' changes ownership.", "source": "linux_basics"}

@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+requests
+python-dotenv
+pydantic
+PyYAML==6.0.2
+
+psycopg[binary]
+
+qdrant-client
+langchain
+langchain-community
+langchain-ollama
+langchain-qdrant
