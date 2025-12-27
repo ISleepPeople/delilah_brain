@@ -1,0 +1,29 @@
+# Secrets
+.env
+.env.*
+*.secret
+*.key
+*.pem
+*.p12
+*.token
+
+# Runtime data
+data/
+volumes/
+backups/
+logs/
+
+# Docker state (never commit container volumes/state)
+**/postgresql/data/
+**/qdrant/storage/
+**/ollama/models/
+
+# Python
+__pycache__/
+*.pyc
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

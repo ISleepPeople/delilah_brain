@@ -1,0 +1,641 @@
+services:
+  # =========================================
+  # CORE INFRASTRUCTURE
+  # =========================================
+  mosquitto:
+    image: eclipse-mosquitto
+    container_name: mosquitto
+    hostname: mosquitto
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - /srv/delilah/data/config/mosquitto:/mosquitto/config
+      - /srv/delilah/data/config/mosquitto/data:/mosquitto/data
+      - /srv/delilah/data/config/mosquitto/log:/mosquitto/log
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks:
+      - delilah_net
+
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    hostname: portainer
+    restart: always
+    ports:
+      - "8000:8000"
+      - "9443:9443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer_data:/data
+    networks:
+      - delilah_net
+
+  watchtower:
+    image: containrrr/watchtower
+    container_name: watchtower
+    hostname: watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --interval 86400 --cleanup --label-enable
+    networks:
+      - delilah_net
+
+  homepage:
+    image: ghcr.io/gethomepage/homepage:latest
+    container_name: homepage
+    hostname: homepage
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    volumes:
+      - /srv/delilah/data/config/homepage:/app/config
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - HOMEPAGE_ALLOWED_HOSTS=192.168.1.111:3000
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks:
+      - delilah_net
+
+  # =========================================
+  # MEDIA PLAYERS & MONITORING
+  # =========================================
+  plex:
+    image: plexinc/pms-docker:plexpass
+    container_name: plex
+    hostname: plex
+    network_mode: host
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+      - PLEX_CLAIM=${PLEX_CLAIM}
+    volumes:
+      - /srv/delilah/data/config/plex:/config
+      - /mnt/Media:/media/existing_media
+      - /delilah-pool/media:/media/nvme_downloads
+      - /tmp/plex_transcode:/transcode
+    devices:
+      - /dev/dri:/dev/dri
+    # (Cannot attach to delilah_net because it uses host network)
+
+  tautulli:
+    image: lscr.io/linuxserver/tautulli:latest
+    container_name: tautulli
+    hostname: tautulli
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - /srv/delilah/data/config/tautulli:/config
+    ports:
+      - "8182:8181"
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks:
+      - delilah_net
+
+  audiobookshelf:
+    image: ghcr.io/advplyr/audiobookshelf:latest
+    container_name: audiobookshelf
+    hostname: audiobookshelf
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - /srv/delilah/data/config/audiobookshelf:/config
+      - /mnt/Media/Audiobooks:/audiobooks
+      - /mnt/Media/Podcasts:/podcasts
+      - /srv/delilah/data/config/audiobookshelf/metadata:/metadata
+    ports:
+      - "13378:80"
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks:
+      - delilah_net
+
+  # =========================================
+  # AUTOMATION & LOGIC
+  # =========================================
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:1.119.2
+    container_name: n8n
+    hostname: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    env_file: .env
+    environment:
+      - N8N_HOST=192.168.1.111
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - N8N_EDITOR_BASE_URL=http://192.168.1.111:5678
+      - N8N_SECURE_COOKIE=false
+      - GENERIC_TIMEZONE=America/New_York
+
+      # SQLite + recommended vars
+      - DB_TYPE=sqlite
+      - DB_SQLITE_DATABASE=/home/node/.n8n/database.sqlite
+      - DB_SQLITE_POOL_SIZE=5
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
+      - N8N_GIT_NODE_DISABLE_BARE_REPOS=true
+
+      # Optional basic auth (set whatever you like)
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=ryan
+      - N8N_BASIC_AUTH_PASSWORD=214RoBiN
+    volumes:
+      - /srv/delilah/data/config/n8n:/home/node/.n8n
+    networks:
+      - delilah_net
+
+  nodered:
+    image: nodered/node-red
+    container_name: nodered
+    hostname: nodered
+    restart: unless-stopped
+    ports:
+      - "1880:1880"
+    env_file: .env
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - /srv/delilah/data/config/nodered:/data
+    networks:
+      - delilah_net
+
+  # =========================================
+  # THE "*ARR" STACK (Media Management)
+  # =========================================
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    hostname: prowlarr
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - /srv/delilah/data/config/prowlarr:/config
+    ports:
+      - "9696:9696"
+    networks:
+      - delilah_net
+
+  flaresolverr:
+    image: flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=info
+      - TZ=${TZ}   # This pulls the time from your .env file
+    ports:
+      - "8191:8191"
+    networks:
+      - delilah_net  
+  
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    hostname: sonarr
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - /srv/delilah/data/config/sonarr:/config
+      - /delilah-pool/media:/data/downloads
+      - /mnt/Media:/data/existing_media
+      - /delilah-pool/media/downloads:/downloads 
+    ports:
+      - "8989:8989"
+    networks:
+      - delilah_net
+
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    hostname: radarr
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - /srv/delilah/data/config/radarr:/config
+      - /delilah-pool/media:/data/downloads
+      - /mnt/Media:/data/existing_media
+      - /delilah-pool/media/downloads:/downloads
+    ports:
+      - "7878:7878"
+    networks:
+      - delilah_net
+
+  lidarr:
+    image: lscr.io/linuxserver/lidarr:latest
+    container_name: lidarr
+    hostname: lidarr
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - /srv/delilah/data/config/lidarr:/config
+      - /delilah-pool/media:/data/downloads
+      - /mnt/Media:/data/existing_media
+      - /delilah-pool/media/downloads:/downloads
+    ports:
+      - "8686:8686"
+    networks:
+      - delilah_net
+
+  readarr:
+    image: lscr.io/linuxserver/readarr:0.4.18-develop
+    container_name: readarr
+    hostname: readarr
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - /srv/delilah/data/config/readarr:/config
+      - /delilah-pool/media:/data/downloads
+      - /mnt/Documents:/data/existing_media
+      - /delilah-pool/media/downloads:/downloads
+    ports:
+      - "8787:8787"
+    networks:
+      - delilah_net
+
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:latest
+    container_name: bazarr
+    hostname: bazarr
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - /srv/delilah/data/config/bazarr:/config
+      - /mnt/Media:/movies
+      - /mnt/Media:/tv
+    ports:
+      - "6767:6767"
+    networks:
+      - delilah_net
+
+  overseerr:
+    image: sctx/overseerr:latest
+    container_name: overseerr
+    hostname: overseerr
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - /srv/delilah/data/config/overseerr:/app/config
+    ports:
+      - "5055:5055"
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks:
+      - delilah_net
+
+  # --- DOWNLOADERS & UTILITIES ---
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      - "8112:8112"        # Deluge Web UI
+      - "58846:58846"      # Deluge Daemon (FOR SONARR/RADARR)
+      - "8888:8888"        # HTTP proxy (optional, keep if you use it)
+    volumes:
+      - /srv/delilah/data/config/gluetun:/gluetun
+    environment:
+      - VPN_SERVICE_PROVIDER="private internet access"
+      - VPN_TYPE=openvpn
+      - OPENVPN_USER=${PIA_USER}
+      - OPENVPN_PASSWORD=${PIA_PASS}
+      - SERVER_REGIONS=Switzerland
+      - VPN_PORT_FORWARDING=on
+      - FIREWALL_VPN_INPUT_PORTS=12345  # Placeholder, Gluetun updates this automatically
+      - LOG_LEVEL=info
+      - OPENVPN_PROTOCOL=tcp
+    restart: always
+    networks:
+      - delilah_net
+  
+  deluge:
+    image: lscr.io/linuxserver/deluge:latest
+    container_name: deluge
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+    env_file: .env
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - /srv/delilah/data/config/deluge:/config
+      - /delilah-pool/media/downloads:/downloads
+    restart: unless-stopped
+    # IMPORTANT: NO ports: here, NO hostname:
+    # Gluetun is the only one with ports.
+
+  unpackerr:
+    image: golift/unpackerr
+    container_name: unpackerr
+    hostname: unpackerr
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - /srv/delilah/data/config/unpackerr:/config
+      - /delilah-pool/media:/data/downloads
+      - /mnt/Media:/data/media
+      - /mnt/Documents:/data/books
+    networks:
+      - delilah_net
+
+  freshrss:
+    image: lscr.io/linuxserver/freshrss:latest
+    container_name: freshrss
+    hostname: freshrss
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - /srv/delilah/data/config/freshrss:/config
+    ports:
+      - "8085:80"
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks:
+      - delilah_net
+
+  changedetection:
+    image: lscr.io/linuxserver/changedetection.io:latest
+    container_name: changedetection
+    hostname: changedetection
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID}
+      - PGID=${PGID}
+      - TZ=${TZ}
+    volumes:
+      - /srv/delilah/data/config/changedetection:/config
+    ports:
+      - "5000:5000"
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+    networks:
+      - delilah_net
+
+# =========================================
+  # THE BRAIN (AI STACK)
+  # =========================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    hostname: ollama
+    restart: always
+    tty: true
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+    volumes:
+      - /delilah-pool/ai/ollama:/root/.ollama
+    ports:                  # <--- ADD THIS SECTION
+      - "11434:11434"
+    networks:
+      - delilah_net
+    # ?? GPU ACTIVATION ??
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    hostname: open-webui
+    restart: unless-stopped
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+    volumes:
+      - /delilah-pool/ai/openwebui:/app/backend/data
+    ports:
+      - "3001:8080" # Access at http://192.168.1.111:3001
+    depends_on:
+      - ollama
+    networks:
+      - delilah_net
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    hostname: qdrant
+    restart: unless-stopped
+    volumes:
+      - /delilah-pool/ai/qdrant:/qdrant/storage
+    ports:
+      - "6333:6333"
+    networks:
+      - delilah_net
+
+  whisper:
+    image: rhasspy/wyoming-whisper
+    container_name: whisper
+    restart: unless-stopped
+    ports:
+      - "10300:10300"
+    volumes:
+      - /delilah-pool/ai/whisper:/data
+    environment:
+      - TZ=${TZ}
+    # Command: Use 'medium' model, English, and FORCE CUDA (GPU)
+    command: --model medium --device cuda
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - delilah_net
+
+  piper:
+    image: rhasspy/wyoming-piper
+    container_name: piper
+    restart: unless-stopped
+    ports:
+      - "10200:10200"
+    volumes:
+      - /delilah-pool/ai/piper:/data
+    environment:
+      - TZ=${TZ}
+    # Command: Use a high-quality female voice (Amy)
+    command: --voice en_US-amy-medium
+    networks:
+      - delilah_net
+
+  faster_whisper:
+    image: fedirz/faster-whisper-server:latest-cuda
+    container_name: faster_whisper
+    restart: unless-stopped
+    ports:
+      - "9000:8000"
+    environment:
+      - WHISPER_MODEL=medium
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - delilah_net
+
+  delilah_brain_v2:
+    container_name: delilah_brain_v2
+    build:
+      context: /home/dad/delilah_workspace
+      dockerfile: Dockerfile.delilah_brain_v2
+      args:
+        INSTALL_DEV_TOOLS: "1"
+    restart: unless-stopped
+
+    environment:
+      PYTHONUNBUFFERED: "1"
+
+      # Dependencies (Model A for Ollama/Qdrant on delilah_net)
+      OLLAMA_URL: "http://ollama:11434"
+      QDRANT_URL: "http://qdrant:6333"
+
+      # Postgres (temporary until Postgres is merged into this same compose)
+      # This matches how you were already successfully connecting to Postgres.
+      DATABASE_URL: "postgresql://delilah:delilah_change_me@host.docker.internal:5432/delilah"
+      PG_LOGGING_ENABLED: "1"
+
+      # Models / embeddings
+      CHAT_MODEL: "llama3:8b"
+      EMBED_MODEL: "nomic-embed-text"
+      EMBED_DIM: "768"
+
+      # Collections (v768)
+      COL_KNOWLEDGE: "delilah_knowledge_v768"
+      COL_ROUTER_HINTS: "router_hints_v768"
+      COL_PERSONA: "persona_memory_v768"
+      COL_CONVO: "conversation_memory_v768"
+
+      # Timeouts / safety
+      TOOL_TIMEOUT_S: "8"
+      OLLAMA_TIMEOUT_S: "20"
+      QDRANT_TIMEOUT_S: "2"
+
+    ports:
+      - "8800:8800"
+
+    volumes:
+      - /home/dad/delilah_workspace:/app
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    depends_on:
+      - ollama
+      - qdrant
+
+    networks:
+      - delilah_net
+ 
+  ovos_messagebus:
+    image: smartgic/ovos-messagebus:alpha
+    container_name: ovos_messagebus
+    restart: unless-stopped
+    network_mode: "host"
+
+  ovos_core:
+    image: smartgic/ovos-core:alpha
+    container_name: ovos_core
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - ${OVOS_CONFIG_FOLDER}:/home/ovos/.config/mycroft
+      - ${OVOS_SHARE_FOLDER}:/home/ovos/.local/share/mycroft
+    depends_on:
+      - ovos_messagebus
+      - mosquitto
+    network_mode: "host"
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+   
+  ovos_audio:
+    image: smartgic/ovos-audio:alpha
+    container_name: ovos_audio
+    restart: unless-stopped
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - ${OVOS_CONFIG_FOLDER}:/home/ovos/.config/mycroft
+      - ${OVOS_SHARE_FOLDER}:/home/ovos/.local/share/mycroft
+    depends_on:
+      - ovos_messagebus
+    network_mode: "host"
+ 
+  hivemind_listener:
+    image: smartgic/hivemind-listener:alpha
+    container_name: hivemind_listener
+    restart: unless-stopped
+    network_mode: "host"
+    volumes:
+      - ${HIVEMIND_CONFIG_FOLDER}:/home/hivemind/.config/hivemind
+    depends_on:
+      - ovos_core
+  
+
+volumes:
+  portainer_data:
+
+networks:
+  delilah_net:
+    driver: bridge
