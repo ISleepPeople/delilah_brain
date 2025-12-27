@@ -1,0 +1,433 @@
+Architectural Decisions — Project Delilah
+Purpose of This Document
+
+This document records binding architectural decisions made during the design and implementation of Delilah.
+
+Its goals are to:
+
+Prevent re-litigation of settled choices
+
+Preserve rationale across time, tools, and LLM contexts
+
+Enable safe iteration without architectural drift
+
+If a proposal conflicts with this document, it must:
+
+Be explicitly identified as a change
+
+Include justification
+
+Be consciously accepted as a new decision
+
+Decision Scope
+
+These decisions apply to:
+
+System architecture
+
+Data ownership and persistence
+
+Orchestration philosophy
+
+Persona and voice design
+
+Operational safety and recovery
+
+They remain valid unless explicitly superseded.
+
+Core Architectural Decisions
+D-001 — Local-First Operation
+
+Decision
+Delilah operates fully locally by default.
+
+Rationale
+
+Predictable latency
+
+Privacy and data control
+
+Independence from cloud availability
+
+Implications
+
+Cloud APIs are optional and explicitly gated
+
+Local models must be sufficient for baseline operation
+
+D-002 — PostgreSQL as System of Record
+
+Decision
+PostgreSQL is the authoritative system of record.
+
+Rationale
+
+Strong consistency
+
+Schema evolution via migrations
+
+Auditable, replayable history
+
+Stored
+
+Conversation turn ledger
+
+Tool call audit history
+
+Trace IDs and execution metadata
+
+Explicitly Not Stored
+
+Vector embeddings
+
+Volatile tool outputs
+
+D-003 — Qdrant for Semantic Memory Only
+
+Decision
+Qdrant is used exclusively for semantic memory and retrieval.
+
+Rationale
+
+Optimized vector search
+
+Decouples recall from truth
+
+Supports domain-specific RAG
+
+Constraints
+
+Qdrant is never authoritative
+
+All critical state must exist in PostgreSQL
+
+Current Parameters
+
+Embedding size: 768
+
+Use cases: knowledge retrieval, long-term semantic memory
+
+Explicitly not used for: weather, sports, real-time tools
+
+D-004 — Layered Control Architecture
+
+Decision
+Delilah follows a layered control model:
+
+Interface → Brain Orchestrator → Tools → Actuators
+
+
+Rationale
+
+Clear separation of concerns
+
+Easier debugging and evolution
+
+Safe parallel development
+
+D-005 — Deterministic Orchestration (LangGraph Planned)
+
+Decision
+Future orchestration will be implemented using LangChain + LangGraph.
+
+Rationale
+
+Deterministic state transitions
+
+Visualizable execution graphs
+
+Natural fit for MoE routing
+
+Status
+
+Planned and approved
+
+Current Brain v2 orchestrator remains authoritative until migration
+
+D-006 — Mixture-of-Experts Architecture (Planned & Binding)
+
+Decision
+Delilah will use a Mixture-of-Experts (MoE) model.
+
+Rationale
+
+Domain specialization
+
+Improved reasoning accuracy
+
+Controlled scaling
+
+Implementation Notes
+
+Experts may be local or remote
+
+Routing logic lives in the orchestrator
+
+Experts may have independent RAG collections
+
+Persona & Voice Decisions
+D-007 — Clean TTS Training Data Only
+
+Decision
+TTS models must be trained on clean, de-clicked, de-breathed audio.
+
+Rationale
+
+Prevents baked-in artifacts
+
+Enables controllable expressiveness
+
+Rule
+Expressive artifacts (breaths, sighs, pauses) are added at runtime only.
+
+D-008 — Expressiveness as a Control Layer
+
+Decision
+Expressiveness is a separate, controllable runtime layer.
+
+Rationale
+
+Context-aware behavior
+
+User-specific preferences
+
+Repeatable tuning
+
+D-009 — Speaker Recognition Is Orthogonal
+
+Decision
+Speaker recognition is independent from speech-to-text.
+
+Rationale
+
+Cleaner pipelines
+
+Easier debugging
+
+Avoids coupled failure modes
+
+Automation & Integration Decisions
+D-010 — n8n as Workflow Glue
+
+Decision
+n8n is used for automation and integration, not reasoning.
+
+Rationale
+
+Strong webhook support
+
+External system orchestration
+
+Visual workflows
+
+Explicitly Not Used For
+
+Conversational logic
+
+Decision making
+
+D-011 — Home Assistant as Actuator Only
+
+Decision
+Home Assistant executes actions; it does not decide intent.
+
+Rationale
+
+Keeps automation deterministic
+
+Centralizes reasoning in the brain
+
+Data Policy & Routing Decisions
+D-012 — No Ingestion of Time-Volatile Facts
+
+Decision
+Inherently time-volatile data is never stored in RAG or Postgres.
+
+Includes
+
+Weather
+
+Sports scores
+
+Prices
+
+“Today’s X”
+
+Live schedules
+
+Alternative
+
+Route to live tools with freshness handling
+
+Optionally store “how to retrieve” instructions
+
+D-013 — Tool vs Knowledge Routing Rules (Enforced)
+Category	Uses RAG	Stored	Logged
+Knowledge Q&A	✅	✅	✅
+Weather	❌	❌	❌
+Real-time tools	❌	❌	❌
+Persona state	⚠️ Planned	⚠️ Planned	⚠️ Planned
+
+No exceptions without updating project_state.md and re-verification.
+
+Deployment & Operations Decisions
+D-014 — Docker-First Deployment
+
+Decision
+All services run in Docker containers.
+
+Rationale
+
+Reproducibility
+
+Isolation
+
+Rollback safety
+
+Operational Rules
+
+One authoritative compose file per concern
+
+Named networks (delilah_net)
+
+Explicit volumes for stateful services
+
+Avoid duplicate container names
+
+D-015 — ZFS Dataset Isolation
+
+Decision
+Each major workload has its own ZFS dataset.
+
+Rationale
+
+Performance tuning
+
+Snapshot safety
+
+Data integrity
+
+D-016 — ZFS Snapshots Are Mandatory
+
+Decision
+All authoritative datasets must be protected by automated ZFS snapshots.
+
+Includes
+
+PostgreSQL data
+
+Backups
+
+Qdrant vectors
+
+D-017 — Additive Changes Only by Default
+
+Decision
+Changes are additive unless explicitly authorized.
+
+Rationale
+
+Prevents regressions
+
+Encourages phased migration
+
+D-018 — Startup Configuration Must Be Logged
+
+Decision
+Configuration must be logged at runtime startup.
+
+Rationale
+
+Prevents silent misconfiguration
+
+Enables post-incident analysis
+
+Implementation
+
+FastAPI lifespan hook (or equivalent)
+
+No config logging at import time
+
+Cloud Fallback Decisions
+D-019 — Local-First with Gated Cloud Fallback
+
+Decision
+Cloud fallback is allowed but explicitly gated.
+
+Approved Providers
+
+ChatGPT
+
+Gemini
+
+Claude
+
+Requirements
+
+Explicit routing
+
+Audit logging
+
+Trace IDs
+
+Cost controls
+
+Defined failure behavior
+
+D-020 — Jury of Oracles (Planned & Accepted)
+
+Decision
+A “jury of oracles” approach is approved for fallback verification.
+
+Status
+
+Planned
+
+Binding intent, not yet implemented
+
+Rules
+
+Asynchronous
+
+Curated output only
+
+Stable facts only ingested
+
+Explicit Rejections
+
+The following are intentionally not used:
+
+Stateless assistants
+
+Cloud-only architectures
+
+Monolithic AI processes
+
+Implicit persistence
+
+Baking emotion into model training
+
+Silent refactors of working systems
+
+Change Management Rule
+
+Any proposal that:
+
+Contradicts this document, or
+
+Alters a binding decision
+
+Must
+
+Be explicitly stated as a change
+
+Include rationale
+
+Be consciously accepted
+
+Final Statement
+
+This document defines what Delilah has decided about itself.
+
+If something seems odd,
+assume it was intentional and consult this file before changing it.

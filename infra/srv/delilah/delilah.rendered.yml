@@ -1,0 +1,1174 @@
+name: delilah
+services:
+  audiobookshelf:
+    container_name: audiobookshelf
+    environment:
+      DELILAH_CHAT_MODEL: llama3:8b
+      DELILAH_COLLECTION: delilah_knowledge
+      DELILAH_EMBED_DIM: "4096"
+      DELILAH_EMBED_MODEL: llama3:8b
+      DELILAH_ROOT: /delilah-pool/delilah
+      GOOGLE_API_KEY: AIzaSyD3iMfkbSib8mJaf3n58zN-g3ih92Kkot4
+      HIVEMIND_CONFIG_FOLDER: /delilah-pool/delilah/config/hivemind-core
+      OPENVPN_PASSWORD: 214RoBiN
+      OPENVPN_USER: p8486760
+      OPENWEATHER_API_KEY: (delilah-server, Ryan.J.Werner80@gmail.com)
+      OVOS_CONFIG_FOLDER: /delilah-pool/delilah/config/mycroft
+      OVOS_SHARE_FOLDER: /delilah-pool/delilah/share/mycroft
+      PGID: "1000"
+      PIA_PASS: 214RoBiN
+      PIA_USER: p8486760
+      PLEX_CLAIM: claim-szgYjmwQTB1qF_Ubrpsk
+      PUID: "1000"
+      THESPORTSDB_API_KEY: "1"
+      TZ: America/New_York
+      WATCHMODE_API_KEY: jV6CWCF9VT3nsLwZfsNFsuyYvipFsEQZITRNJBmb
+    hostname: audiobookshelf
+    image: ghcr.io/advplyr/audiobookshelf:latest
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 80
+        published: "13378"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /srv/delilah/data/config/audiobookshelf
+        target: /config
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /mnt/Media/Audiobooks
+        target: /audiobooks
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /mnt/Media/Podcasts
+        target: /podcasts
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /srv/delilah/data/config/audiobookshelf/metadata
+        target: /metadata
+        bind:
+          create_host_path: true
+  bazarr:
+    container_name: bazarr
+    environment:
+      DELILAH_CHAT_MODEL: llama3:8b
+      DELILAH_COLLECTION: delilah_knowledge
+      DELILAH_EMBED_DIM: "4096"
+      DELILAH_EMBED_MODEL: llama3:8b
+      DELILAH_ROOT: /delilah-pool/delilah
+      GOOGLE_API_KEY: AIzaSyD3iMfkbSib8mJaf3n58zN-g3ih92Kkot4
+      HIVEMIND_CONFIG_FOLDER: /delilah-pool/delilah/config/hivemind-core
+      OPENVPN_PASSWORD: 214RoBiN
+      OPENVPN_USER: p8486760
+      OPENWEATHER_API_KEY: (delilah-server, Ryan.J.Werner80@gmail.com)
+      OVOS_CONFIG_FOLDER: /delilah-pool/delilah/config/mycroft
+      OVOS_SHARE_FOLDER: /delilah-pool/delilah/share/mycroft
+      PGID: "1000"
+      PIA_PASS: 214RoBiN
+      PIA_USER: p8486760
+      PLEX_CLAIM: claim-szgYjmwQTB1qF_Ubrpsk
+      PUID: "1000"
+      THESPORTSDB_API_KEY: "1"
+      TZ: America/New_York
+      WATCHMODE_API_KEY: jV6CWCF9VT3nsLwZfsNFsuyYvipFsEQZITRNJBmb
+    hostname: bazarr
+    image: lscr.io/linuxserver/bazarr:latest
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 6767
+        published: "6767"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /srv/delilah/data/config/bazarr
+        target: /config
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /mnt/Media
+        target: /movies
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /mnt/Media
+        target: /tv
+        bind:
+          create_host_path: true
+  changedetection:
+    container_name: changedetection
+    environment:
+      PGID: "1000"
+      PUID: "1000"
+      TZ: America/New_York
+    hostname: changedetection
+    image: lscr.io/linuxserver/changedetection.io:latest
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 5000
+        published: "5000"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /srv/delilah/data/config/changedetection
+        target: /config
+        bind:
+          create_host_path: true
+  delilah_brain_v2:
+    build:
+      context: /home/dad/delilah_workspace
+      dockerfile: Dockerfile.delilah_brain_v2
+      args:
+        INSTALL_DEV_TOOLS: "1"
+    container_name: delilah_brain_v2
+    depends_on:
+      ollama:
+        condition: service_started
+        required: true
+      qdrant:
+        condition: service_started
+        required: true
+    environment:
+      CHAT_MODEL: llama3:8b
+      COL_CONVO: conversation_memory_v768
+      COL_KNOWLEDGE: delilah_knowledge_v768
+      COL_PERSONA: persona_memory_v768
+      COL_ROUTER_HINTS: router_hints_v768
+      DATABASE_URL: postgresql://delilah:delilah_change_me@host.docker.internal:5432/delilah
+      EMBED_DIM: "768"
+      EMBED_MODEL: nomic-embed-text
+      OLLAMA_TIMEOUT_S: "20"
+      OLLAMA_URL: http://ollama:11434
+      PG_LOGGING_ENABLED: "1"
+      PYTHONUNBUFFERED: "1"
+      QDRANT_TIMEOUT_S: "2"
+      QDRANT_URL: http://qdrant:6333
+      TOOL_TIMEOUT_S: "8"
+    extra_hosts:
+      - host.docker.internal=host-gateway
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 8800
+        published: "8800"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /home/dad/delilah_workspace
+        target: /app
+        bind:
+          create_host_path: true
+  deluge:
+    container_name: deluge
+    depends_on:
+      gluetun:
+        condition: service_started
+        required: true
+    environment:
+      DELILAH_CHAT_MODEL: llama3:8b
+      DELILAH_COLLECTION: delilah_knowledge
+      DELILAH_EMBED_DIM: "4096"
+      DELILAH_EMBED_MODEL: llama3:8b
+      DELILAH_ROOT: /delilah-pool/delilah
+      GOOGLE_API_KEY: AIzaSyD3iMfkbSib8mJaf3n58zN-g3ih92Kkot4
+      HIVEMIND_CONFIG_FOLDER: /delilah-pool/delilah/config/hivemind-core
+      OPENVPN_PASSWORD: 214RoBiN
+      OPENVPN_USER: p8486760
+      OPENWEATHER_API_KEY: (delilah-server, Ryan.J.Werner80@gmail.com)
+      OVOS_CONFIG_FOLDER: /delilah-pool/delilah/config/mycroft
+      OVOS_SHARE_FOLDER: /delilah-pool/delilah/share/mycroft
+      PGID: "1000"
+      PIA_PASS: 214RoBiN
+      PIA_USER: p8486760
+      PLEX_CLAIM: claim-szgYjmwQTB1qF_Ubrpsk
+      PUID: "1000"
+      THESPORTSDB_API_KEY: "1"
+      TZ: America/New_York
+      WATCHMODE_API_KEY: jV6CWCF9VT3nsLwZfsNFsuyYvipFsEQZITRNJBmb
+    image: lscr.io/linuxserver/deluge:latest
+    network_mode: service:gluetun
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /srv/delilah/data/config/deluge
+        target: /config
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /delilah-pool/media/downloads
+        target: /downloads
+        bind:
+          create_host_path: true
+  faster_whisper:
+    container_name: faster_whisper
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities:
+                - gpu
+              driver: nvidia
+              count: 1
+    environment:
+      WHISPER_MODEL: medium
+    image: fedirz/faster-whisper-server:latest-cuda
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 8000
+        published: "9000"
+        protocol: tcp
+    restart: unless-stopped
+  flaresolverr:
+    container_name: flaresolverr
+    environment:
+      LOG_LEVEL: info
+      TZ: America/New_York
+    image: flaresolverr/flaresolverr:latest
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 8191
+        published: "8191"
+        protocol: tcp
+    restart: unless-stopped
+  freshrss:
+    container_name: freshrss
+    environment:
+      DELILAH_CHAT_MODEL: llama3:8b
+      DELILAH_COLLECTION: delilah_knowledge
+      DELILAH_EMBED_DIM: "4096"
+      DELILAH_EMBED_MODEL: llama3:8b
+      DELILAH_ROOT: /delilah-pool/delilah
+      GOOGLE_API_KEY: AIzaSyD3iMfkbSib8mJaf3n58zN-g3ih92Kkot4
+      HIVEMIND_CONFIG_FOLDER: /delilah-pool/delilah/config/hivemind-core
+      OPENVPN_PASSWORD: 214RoBiN
+      OPENVPN_USER: p8486760
+      OPENWEATHER_API_KEY: (delilah-server, Ryan.J.Werner80@gmail.com)
+      OVOS_CONFIG_FOLDER: /delilah-pool/delilah/config/mycroft
+      OVOS_SHARE_FOLDER: /delilah-pool/delilah/share/mycroft
+      PGID: "1000"
+      PIA_PASS: 214RoBiN
+      PIA_USER: p8486760
+      PLEX_CLAIM: claim-szgYjmwQTB1qF_Ubrpsk
+      PUID: "1000"
+      THESPORTSDB_API_KEY: "1"
+      TZ: America/New_York
+      WATCHMODE_API_KEY: jV6CWCF9VT3nsLwZfsNFsuyYvipFsEQZITRNJBmb
+    hostname: freshrss
+    image: lscr.io/linuxserver/freshrss:latest
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 80
+        published: "8085"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /srv/delilah/data/config/freshrss
+        target: /config
+        bind:
+          create_host_path: true
+  gluetun:
+    cap_add:
+      - NET_ADMIN
+    container_name: gluetun
+    devices:
+      - source: /dev/net/tun
+        target: /dev/net/tun
+        permissions: rwm
+    environment:
+      FIREWALL_VPN_INPUT_PORTS: "12345"
+      LOG_LEVEL: info
+      OPENVPN_PASSWORD: 214RoBiN
+      OPENVPN_PROTOCOL: tcp
+      OPENVPN_USER: p8486760
+      SERVER_REGIONS: Switzerland
+      VPN_PORT_FORWARDING: "on"
+      VPN_SERVICE_PROVIDER: '"private internet access"'
+      VPN_TYPE: openvpn
+    image: qmcgaw/gluetun
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 8112
+        published: "8112"
+        protocol: tcp
+      - mode: ingress
+        target: 58846
+        published: "58846"
+        protocol: tcp
+      - mode: ingress
+        target: 8888
+        published: "8888"
+        protocol: tcp
+    restart: always
+    volumes:
+      - type: bind
+        source: /srv/delilah/data/config/gluetun
+        target: /gluetun
+        bind:
+          create_host_path: true
+  hivemind_listener:
+    container_name: hivemind_listener
+    depends_on:
+      ovos_core:
+        condition: service_started
+        required: true
+    image: smartgic/hivemind-listener:alpha
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /delilah-pool/delilah/config/hivemind-core
+        target: /home/hivemind/.config/hivemind
+        bind:
+          create_host_path: true
+  homepage:
+    container_name: homepage
+    environment:
+      HOMEPAGE_ALLOWED_HOSTS: 192.168.1.111:3000
+    hostname: homepage
+    image: ghcr.io/gethomepage/homepage:latest
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 3000
+        published: "3000"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /srv/delilah/data/config/homepage
+        target: /app/config
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        read_only: true
+        bind:
+          create_host_path: true
+  lidarr:
+    container_name: lidarr
+    environment:
+      DELILAH_CHAT_MODEL: llama3:8b
+      DELILAH_COLLECTION: delilah_knowledge
+      DELILAH_EMBED_DIM: "4096"
+      DELILAH_EMBED_MODEL: llama3:8b
+      DELILAH_ROOT: /delilah-pool/delilah
+      GOOGLE_API_KEY: AIzaSyD3iMfkbSib8mJaf3n58zN-g3ih92Kkot4
+      HIVEMIND_CONFIG_FOLDER: /delilah-pool/delilah/config/hivemind-core
+      OPENVPN_PASSWORD: 214RoBiN
+      OPENVPN_USER: p8486760
+      OPENWEATHER_API_KEY: (delilah-server, Ryan.J.Werner80@gmail.com)
+      OVOS_CONFIG_FOLDER: /delilah-pool/delilah/config/mycroft
+      OVOS_SHARE_FOLDER: /delilah-pool/delilah/share/mycroft
+      PGID: "1000"
+      PIA_PASS: 214RoBiN
+      PIA_USER: p8486760
+      PLEX_CLAIM: claim-szgYjmwQTB1qF_Ubrpsk
+      PUID: "1000"
+      THESPORTSDB_API_KEY: "1"
+      TZ: America/New_York
+      WATCHMODE_API_KEY: jV6CWCF9VT3nsLwZfsNFsuyYvipFsEQZITRNJBmb
+    hostname: lidarr
+    image: lscr.io/linuxserver/lidarr:latest
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 8686
+        published: "8686"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /srv/delilah/data/config/lidarr
+        target: /config
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /delilah-pool/media
+        target: /data/downloads
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /mnt/Media
+        target: /data/existing_media
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /delilah-pool/media/downloads
+        target: /downloads
+        bind:
+          create_host_path: true
+  mosquitto:
+    container_name: mosquitto
+    hostname: mosquitto
+    image: eclipse-mosquitto
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 1883
+        published: "1883"
+        protocol: tcp
+      - mode: ingress
+        target: 9001
+        published: "9001"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /srv/delilah/data/config/mosquitto
+        target: /mosquitto/config
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /srv/delilah/data/config/mosquitto/data
+        target: /mosquitto/data
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /srv/delilah/data/config/mosquitto/log
+        target: /mosquitto/log
+        bind:
+          create_host_path: true
+  n8n:
+    container_name: n8n
+    environment:
+      DB_SQLITE_DATABASE: /home/node/.n8n/database.sqlite
+      DB_SQLITE_POOL_SIZE: "5"
+      DB_TYPE: sqlite
+      DELILAH_CHAT_MODEL: llama3:8b
+      DELILAH_COLLECTION: delilah_knowledge
+      DELILAH_EMBED_DIM: "4096"
+      DELILAH_EMBED_MODEL: llama3:8b
+      DELILAH_ROOT: /delilah-pool/delilah
+      GENERIC_TIMEZONE: America/New_York
+      GOOGLE_API_KEY: AIzaSyD3iMfkbSib8mJaf3n58zN-g3ih92Kkot4
+      HIVEMIND_CONFIG_FOLDER: /delilah-pool/delilah/config/hivemind-core
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_PASSWORD: 214RoBiN
+      N8N_BASIC_AUTH_USER: ryan
+      N8N_EDITOR_BASE_URL: http://192.168.1.111:5678
+      N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS: "true"
+      N8N_GIT_NODE_DISABLE_BARE_REPOS: "true"
+      N8N_HOST: 192.168.1.111
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: http
+      N8N_RUNNERS_ENABLED: "true"
+      N8N_SECURE_COOKIE: "false"
+      OPENVPN_PASSWORD: 214RoBiN
+      OPENVPN_USER: p8486760
+      OPENWEATHER_API_KEY: (delilah-server, Ryan.J.Werner80@gmail.com)
+      OVOS_CONFIG_FOLDER: /delilah-pool/delilah/config/mycroft
+      OVOS_SHARE_FOLDER: /delilah-pool/delilah/share/mycroft
+      PGID: "1000"
+      PIA_PASS: 214RoBiN
+      PIA_USER: p8486760
+      PLEX_CLAIM: claim-szgYjmwQTB1qF_Ubrpsk
+      PUID: "1000"
+      THESPORTSDB_API_KEY: "1"
+      TZ: America/New_York
+      WATCHMODE_API_KEY: jV6CWCF9VT3nsLwZfsNFsuyYvipFsEQZITRNJBmb
+    hostname: n8n
+    image: docker.n8n.io/n8nio/n8n:1.119.2
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 5678
+        published: "5678"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /srv/delilah/data/config/n8n
+        target: /home/node/.n8n
+        bind:
+          create_host_path: true
+  nodered:
+    container_name: nodered
+    environment:
+      DELILAH_CHAT_MODEL: llama3:8b
+      DELILAH_COLLECTION: delilah_knowledge
+      DELILAH_EMBED_DIM: "4096"
+      DELILAH_EMBED_MODEL: llama3:8b
+      DELILAH_ROOT: /delilah-pool/delilah
+      GOOGLE_API_KEY: AIzaSyD3iMfkbSib8mJaf3n58zN-g3ih92Kkot4
+      HIVEMIND_CONFIG_FOLDER: /delilah-pool/delilah/config/hivemind-core
+      OPENVPN_PASSWORD: 214RoBiN
+      OPENVPN_USER: p8486760
+      OPENWEATHER_API_KEY: (delilah-server, Ryan.J.Werner80@gmail.com)
+      OVOS_CONFIG_FOLDER: /delilah-pool/delilah/config/mycroft
+      OVOS_SHARE_FOLDER: /delilah-pool/delilah/share/mycroft
+      PGID: "1000"
+      PIA_PASS: 214RoBiN
+      PIA_USER: p8486760
+      PLEX_CLAIM: claim-szgYjmwQTB1qF_Ubrpsk
+      PUID: "1000"
+      THESPORTSDB_API_KEY: "1"
+      TZ: America/New_York
+      WATCHMODE_API_KEY: jV6CWCF9VT3nsLwZfsNFsuyYvipFsEQZITRNJBmb
+    hostname: nodered
+    image: nodered/node-red
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 1880
+        published: "1880"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /srv/delilah/data/config/nodered
+        target: /data
+        bind:
+          create_host_path: true
+  ollama:
+    container_name: ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities:
+                - gpu
+              driver: nvidia
+              count: 1
+    environment:
+      OLLAMA_KEEP_ALIVE: 24h
+    hostname: ollama
+    image: ollama/ollama:latest
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 11434
+        published: "11434"
+        protocol: tcp
+    restart: always
+    tty: true
+    volumes:
+      - type: bind
+        source: /delilah-pool/ai/ollama
+        target: /root/.ollama
+        bind:
+          create_host_path: true
+  open-webui:
+    container_name: open-webui
+    depends_on:
+      ollama:
+        condition: service_started
+        required: true
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+    hostname: open-webui
+    image: ghcr.io/open-webui/open-webui:main
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 8080
+        published: "3001"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /delilah-pool/ai/openwebui
+        target: /app/backend/data
+        bind:
+          create_host_path: true
+  overseerr:
+    container_name: overseerr
+    environment:
+      DELILAH_CHAT_MODEL: llama3:8b
+      DELILAH_COLLECTION: delilah_knowledge
+      DELILAH_EMBED_DIM: "4096"
+      DELILAH_EMBED_MODEL: llama3:8b
+      DELILAH_ROOT: /delilah-pool/delilah
+      GOOGLE_API_KEY: AIzaSyD3iMfkbSib8mJaf3n58zN-g3ih92Kkot4
+      HIVEMIND_CONFIG_FOLDER: /delilah-pool/delilah/config/hivemind-core
+      OPENVPN_PASSWORD: 214RoBiN
+      OPENVPN_USER: p8486760
+      OPENWEATHER_API_KEY: (delilah-server, Ryan.J.Werner80@gmail.com)
+      OVOS_CONFIG_FOLDER: /delilah-pool/delilah/config/mycroft
+      OVOS_SHARE_FOLDER: /delilah-pool/delilah/share/mycroft
+      PGID: "1000"
+      PIA_PASS: 214RoBiN
+      PIA_USER: p8486760
+      PLEX_CLAIM: claim-szgYjmwQTB1qF_Ubrpsk
+      PUID: "1000"
+      THESPORTSDB_API_KEY: "1"
+      TZ: America/New_York
+      WATCHMODE_API_KEY: jV6CWCF9VT3nsLwZfsNFsuyYvipFsEQZITRNJBmb
+    hostname: overseerr
+    image: sctx/overseerr:latest
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 5055
+        published: "5055"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /srv/delilah/data/config/overseerr
+        target: /app/config
+        bind:
+          create_host_path: true
+  ovos_audio:
+    container_name: ovos_audio
+    depends_on:
+      ovos_messagebus:
+        condition: service_started
+        required: true
+    environment:
+      TZ: America/New_York
+    image: smartgic/ovos-audio:alpha
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /delilah-pool/delilah/config/mycroft
+        target: /home/ovos/.config/mycroft
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /delilah-pool/delilah/share/mycroft
+        target: /home/ovos/.local/share/mycroft
+        bind:
+          create_host_path: true
+  ovos_core:
+    container_name: ovos_core
+    depends_on:
+      mosquitto:
+        condition: service_started
+        required: true
+      ovos_messagebus:
+        condition: service_started
+        required: true
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    environment:
+      TZ: America/New_York
+    image: smartgic/ovos-core:alpha
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /delilah-pool/delilah/config/mycroft
+        target: /home/ovos/.config/mycroft
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /delilah-pool/delilah/share/mycroft
+        target: /home/ovos/.local/share/mycroft
+        bind:
+          create_host_path: true
+  ovos_messagebus:
+    container_name: ovos_messagebus
+    image: smartgic/ovos-messagebus:alpha
+    network_mode: host
+    restart: unless-stopped
+  piper:
+    command:
+      - --voice
+      - en_US-amy-medium
+    container_name: piper
+    environment:
+      TZ: America/New_York
+    image: rhasspy/wyoming-piper
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 10200
+        published: "10200"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /delilah-pool/ai/piper
+        target: /data
+        bind:
+          create_host_path: true
+  plex:
+    container_name: plex
+    devices:
+      - source: /dev/dri
+        target: /dev/dri
+        permissions: rwm
+    environment:
+      DELILAH_CHAT_MODEL: llama3:8b
+      DELILAH_COLLECTION: delilah_knowledge
+      DELILAH_EMBED_DIM: "4096"
+      DELILAH_EMBED_MODEL: llama3:8b
+      DELILAH_ROOT: /delilah-pool/delilah
+      GOOGLE_API_KEY: AIzaSyD3iMfkbSib8mJaf3n58zN-g3ih92Kkot4
+      HIVEMIND_CONFIG_FOLDER: /delilah-pool/delilah/config/hivemind-core
+      OPENVPN_PASSWORD: 214RoBiN
+      OPENVPN_USER: p8486760
+      OPENWEATHER_API_KEY: (delilah-server, Ryan.J.Werner80@gmail.com)
+      OVOS_CONFIG_FOLDER: /delilah-pool/delilah/config/mycroft
+      OVOS_SHARE_FOLDER: /delilah-pool/delilah/share/mycroft
+      PGID: "1000"
+      PIA_PASS: 214RoBiN
+      PIA_USER: p8486760
+      PLEX_CLAIM: claim-szgYjmwQTB1qF_Ubrpsk
+      PUID: "1000"
+      THESPORTSDB_API_KEY: "1"
+      TZ: America/New_York
+      WATCHMODE_API_KEY: jV6CWCF9VT3nsLwZfsNFsuyYvipFsEQZITRNJBmb
+    hostname: plex
+    image: plexinc/pms-docker:plexpass
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /srv/delilah/data/config/plex
+        target: /config
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /mnt/Media
+        target: /media/existing_media
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /delilah-pool/media
+        target: /media/nvme_downloads
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /tmp/plex_transcode
+        target: /transcode
+        bind:
+          create_host_path: true
+  portainer:
+    container_name: portainer
+    hostname: portainer
+    image: portainer/portainer-ce:latest
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 8000
+        published: "8000"
+        protocol: tcp
+      - mode: ingress
+        target: 9443
+        published: "9443"
+        protocol: tcp
+    restart: always
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: true
+      - type: volume
+        source: portainer_data
+        target: /data
+        volume: {}
+  prowlarr:
+    container_name: prowlarr
+    environment:
+      DELILAH_CHAT_MODEL: llama3:8b
+      DELILAH_COLLECTION: delilah_knowledge
+      DELILAH_EMBED_DIM: "4096"
+      DELILAH_EMBED_MODEL: llama3:8b
+      DELILAH_ROOT: /delilah-pool/delilah
+      GOOGLE_API_KEY: AIzaSyD3iMfkbSib8mJaf3n58zN-g3ih92Kkot4
+      HIVEMIND_CONFIG_FOLDER: /delilah-pool/delilah/config/hivemind-core
+      OPENVPN_PASSWORD: 214RoBiN
+      OPENVPN_USER: p8486760
+      OPENWEATHER_API_KEY: (delilah-server, Ryan.J.Werner80@gmail.com)
+      OVOS_CONFIG_FOLDER: /delilah-pool/delilah/config/mycroft
+      OVOS_SHARE_FOLDER: /delilah-pool/delilah/share/mycroft
+      PGID: "1000"
+      PIA_PASS: 214RoBiN
+      PIA_USER: p8486760
+      PLEX_CLAIM: claim-szgYjmwQTB1qF_Ubrpsk
+      PUID: "1000"
+      THESPORTSDB_API_KEY: "1"
+      TZ: America/New_York
+      WATCHMODE_API_KEY: jV6CWCF9VT3nsLwZfsNFsuyYvipFsEQZITRNJBmb
+    hostname: prowlarr
+    image: lscr.io/linuxserver/prowlarr:latest
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 9696
+        published: "9696"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /srv/delilah/data/config/prowlarr
+        target: /config
+        bind:
+          create_host_path: true
+  qdrant:
+    container_name: qdrant
+    hostname: qdrant
+    image: qdrant/qdrant:latest
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 6333
+        published: "6333"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /delilah-pool/ai/qdrant
+        target: /qdrant/storage
+        bind:
+          create_host_path: true
+  radarr:
+    container_name: radarr
+    environment:
+      DELILAH_CHAT_MODEL: llama3:8b
+      DELILAH_COLLECTION: delilah_knowledge
+      DELILAH_EMBED_DIM: "4096"
+      DELILAH_EMBED_MODEL: llama3:8b
+      DELILAH_ROOT: /delilah-pool/delilah
+      GOOGLE_API_KEY: AIzaSyD3iMfkbSib8mJaf3n58zN-g3ih92Kkot4
+      HIVEMIND_CONFIG_FOLDER: /delilah-pool/delilah/config/hivemind-core
+      OPENVPN_PASSWORD: 214RoBiN
+      OPENVPN_USER: p8486760
+      OPENWEATHER_API_KEY: (delilah-server, Ryan.J.Werner80@gmail.com)
+      OVOS_CONFIG_FOLDER: /delilah-pool/delilah/config/mycroft
+      OVOS_SHARE_FOLDER: /delilah-pool/delilah/share/mycroft
+      PGID: "1000"
+      PIA_PASS: 214RoBiN
+      PIA_USER: p8486760
+      PLEX_CLAIM: claim-szgYjmwQTB1qF_Ubrpsk
+      PUID: "1000"
+      THESPORTSDB_API_KEY: "1"
+      TZ: America/New_York
+      WATCHMODE_API_KEY: jV6CWCF9VT3nsLwZfsNFsuyYvipFsEQZITRNJBmb
+    hostname: radarr
+    image: lscr.io/linuxserver/radarr:latest
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 7878
+        published: "7878"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /srv/delilah/data/config/radarr
+        target: /config
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /delilah-pool/media
+        target: /data/downloads
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /mnt/Media
+        target: /data/existing_media
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /delilah-pool/media/downloads
+        target: /downloads
+        bind:
+          create_host_path: true
+  readarr:
+    container_name: readarr
+    environment:
+      DELILAH_CHAT_MODEL: llama3:8b
+      DELILAH_COLLECTION: delilah_knowledge
+      DELILAH_EMBED_DIM: "4096"
+      DELILAH_EMBED_MODEL: llama3:8b
+      DELILAH_ROOT: /delilah-pool/delilah
+      GOOGLE_API_KEY: AIzaSyD3iMfkbSib8mJaf3n58zN-g3ih92Kkot4
+      HIVEMIND_CONFIG_FOLDER: /delilah-pool/delilah/config/hivemind-core
+      OPENVPN_PASSWORD: 214RoBiN
+      OPENVPN_USER: p8486760
+      OPENWEATHER_API_KEY: (delilah-server, Ryan.J.Werner80@gmail.com)
+      OVOS_CONFIG_FOLDER: /delilah-pool/delilah/config/mycroft
+      OVOS_SHARE_FOLDER: /delilah-pool/delilah/share/mycroft
+      PGID: "1000"
+      PIA_PASS: 214RoBiN
+      PIA_USER: p8486760
+      PLEX_CLAIM: claim-szgYjmwQTB1qF_Ubrpsk
+      PUID: "1000"
+      THESPORTSDB_API_KEY: "1"
+      TZ: America/New_York
+      WATCHMODE_API_KEY: jV6CWCF9VT3nsLwZfsNFsuyYvipFsEQZITRNJBmb
+    hostname: readarr
+    image: lscr.io/linuxserver/readarr:0.4.18-develop
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 8787
+        published: "8787"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /srv/delilah/data/config/readarr
+        target: /config
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /delilah-pool/media
+        target: /data/downloads
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /mnt/Documents
+        target: /data/existing_media
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /delilah-pool/media/downloads
+        target: /downloads
+        bind:
+          create_host_path: true
+  sonarr:
+    container_name: sonarr
+    environment:
+      DELILAH_CHAT_MODEL: llama3:8b
+      DELILAH_COLLECTION: delilah_knowledge
+      DELILAH_EMBED_DIM: "4096"
+      DELILAH_EMBED_MODEL: llama3:8b
+      DELILAH_ROOT: /delilah-pool/delilah
+      GOOGLE_API_KEY: AIzaSyD3iMfkbSib8mJaf3n58zN-g3ih92Kkot4
+      HIVEMIND_CONFIG_FOLDER: /delilah-pool/delilah/config/hivemind-core
+      OPENVPN_PASSWORD: 214RoBiN
+      OPENVPN_USER: p8486760
+      OPENWEATHER_API_KEY: (delilah-server, Ryan.J.Werner80@gmail.com)
+      OVOS_CONFIG_FOLDER: /delilah-pool/delilah/config/mycroft
+      OVOS_SHARE_FOLDER: /delilah-pool/delilah/share/mycroft
+      PGID: "1000"
+      PIA_PASS: 214RoBiN
+      PIA_USER: p8486760
+      PLEX_CLAIM: claim-szgYjmwQTB1qF_Ubrpsk
+      PUID: "1000"
+      THESPORTSDB_API_KEY: "1"
+      TZ: America/New_York
+      WATCHMODE_API_KEY: jV6CWCF9VT3nsLwZfsNFsuyYvipFsEQZITRNJBmb
+    hostname: sonarr
+    image: lscr.io/linuxserver/sonarr:latest
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 8989
+        published: "8989"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /srv/delilah/data/config/sonarr
+        target: /config
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /delilah-pool/media
+        target: /data/downloads
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /mnt/Media
+        target: /data/existing_media
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /delilah-pool/media/downloads
+        target: /downloads
+        bind:
+          create_host_path: true
+  tautulli:
+    container_name: tautulli
+    environment:
+      DELILAH_CHAT_MODEL: llama3:8b
+      DELILAH_COLLECTION: delilah_knowledge
+      DELILAH_EMBED_DIM: "4096"
+      DELILAH_EMBED_MODEL: llama3:8b
+      DELILAH_ROOT: /delilah-pool/delilah
+      GOOGLE_API_KEY: AIzaSyD3iMfkbSib8mJaf3n58zN-g3ih92Kkot4
+      HIVEMIND_CONFIG_FOLDER: /delilah-pool/delilah/config/hivemind-core
+      OPENVPN_PASSWORD: 214RoBiN
+      OPENVPN_USER: p8486760
+      OPENWEATHER_API_KEY: (delilah-server, Ryan.J.Werner80@gmail.com)
+      OVOS_CONFIG_FOLDER: /delilah-pool/delilah/config/mycroft
+      OVOS_SHARE_FOLDER: /delilah-pool/delilah/share/mycroft
+      PGID: "1000"
+      PIA_PASS: 214RoBiN
+      PIA_USER: p8486760
+      PLEX_CLAIM: claim-szgYjmwQTB1qF_Ubrpsk
+      PUID: "1000"
+      THESPORTSDB_API_KEY: "1"
+      TZ: America/New_York
+      WATCHMODE_API_KEY: jV6CWCF9VT3nsLwZfsNFsuyYvipFsEQZITRNJBmb
+    hostname: tautulli
+    image: lscr.io/linuxserver/tautulli:latest
+    labels:
+      com.centurylinklabs.watchtower.enable: "true"
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 8181
+        published: "8182"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /srv/delilah/data/config/tautulli
+        target: /config
+        bind:
+          create_host_path: true
+  unpackerr:
+    container_name: unpackerr
+    environment:
+      DELILAH_CHAT_MODEL: llama3:8b
+      DELILAH_COLLECTION: delilah_knowledge
+      DELILAH_EMBED_DIM: "4096"
+      DELILAH_EMBED_MODEL: llama3:8b
+      DELILAH_ROOT: /delilah-pool/delilah
+      GOOGLE_API_KEY: AIzaSyD3iMfkbSib8mJaf3n58zN-g3ih92Kkot4
+      HIVEMIND_CONFIG_FOLDER: /delilah-pool/delilah/config/hivemind-core
+      OPENVPN_PASSWORD: 214RoBiN
+      OPENVPN_USER: p8486760
+      OPENWEATHER_API_KEY: (delilah-server, Ryan.J.Werner80@gmail.com)
+      OVOS_CONFIG_FOLDER: /delilah-pool/delilah/config/mycroft
+      OVOS_SHARE_FOLDER: /delilah-pool/delilah/share/mycroft
+      PGID: "1000"
+      PIA_PASS: 214RoBiN
+      PIA_USER: p8486760
+      PLEX_CLAIM: claim-szgYjmwQTB1qF_Ubrpsk
+      PUID: "1000"
+      THESPORTSDB_API_KEY: "1"
+      TZ: America/New_York
+      WATCHMODE_API_KEY: jV6CWCF9VT3nsLwZfsNFsuyYvipFsEQZITRNJBmb
+    hostname: unpackerr
+    image: golift/unpackerr
+    networks:
+      delilah_net: null
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /srv/delilah/data/config/unpackerr
+        target: /config
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /delilah-pool/media
+        target: /data/downloads
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /mnt/Media
+        target: /data/media
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /mnt/Documents
+        target: /data/books
+        bind:
+          create_host_path: true
+  watchtower:
+    command:
+      - --interval
+      - "86400"
+      - --cleanup
+      - --label-enable
+    container_name: watchtower
+    hostname: watchtower
+    image: containrrr/watchtower
+    networks:
+      delilah_net: null
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: true
+  whisper:
+    command:
+      - --model
+      - medium
+      - --device
+      - cuda
+    container_name: whisper
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities:
+                - gpu
+              driver: nvidia
+              count: 1
+    environment:
+      TZ: America/New_York
+    image: rhasspy/wyoming-whisper
+    networks:
+      delilah_net: null
+    ports:
+      - mode: ingress
+        target: 10300
+        published: "10300"
+        protocol: tcp
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /delilah-pool/ai/whisper
+        target: /data
+        bind:
+          create_host_path: true
+networks:
+  delilah_net:
+    name: delilah_delilah_net
+    driver: bridge
+volumes:
+  portainer_data:
+    name: delilah_portainer_data
