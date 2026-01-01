@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 import os
 import re
 
+
+from policy.policy import decide_routing, decide_retrieval
+from tools.contract import ToolRequest
+from tools.wiring import get_tool_executor
+
 try:
     from pg_logger import log_tool_call
 except Exception:
@@ -155,6 +160,7 @@ def weather_tool(tool_args: Dict[str, Any]) -> Dict[str, Any]:
       - No memory writes
     """
     import requests
+    import time
 
     location_query = (
         tool_args.get("location")
@@ -162,21 +168,36 @@ def weather_tool(tool_args: Dict[str, Any]) -> Dict[str, Any]:
         or DEFAULT_LOCATION_QUERY
     )
 
+    # Use a descriptive User-Agent and accept both geo+json and json.
     headers = {
         "User-Agent": "Delilah/1.0 (contact: local)",
-        "Accept": "application/geo+json",
+        "Accept": "application/geo+json, application/json;q=0.9, */*;q=0.1",
     }
 
+    session = requests.Session()
+    session.headers.update(headers)
+
+    def _get_json(url: str, *, params: Dict[str, Any] | None = None, timeout: int = 15, retries: int = 2) -> Any:
+        last_err: Exception | None = None
+        for attempt in range(retries + 1):
+            try:
+                resp = session.get(url, params=params, timeout=timeout)
+                resp.raise_for_status()
+                return resp.json()
+            except Exception as e:
+                last_err = e
+                if attempt < retries:
+                    time.sleep(0.8)
+        raise last_err  # type: ignore[misc]
+
     try:
-        # 1) Resolve location to lat/lon
-        geo_resp = requests.get(
+        # 1) Resolve location to lat/lon (Nominatim)
+        geo = _get_json(
             "https://nominatim.openstreetmap.org/search",
             params={"q": location_query, "format": "json", "limit": 1},
-            headers=headers,
-            timeout=5,
+            timeout=15,
+            retries=2,
         )
-        geo_resp.raise_for_status()
-        geo = geo_resp.json()
 
         if not geo:
             return {
@@ -189,24 +210,20 @@ def weather_tool(tool_args: Dict[str, Any]) -> Dict[str, Any]:
         lon = geo[0]["lon"]
 
         # 2) Get weather.gov grid endpoint
-        points_resp = requests.get(
+        points = _get_json(
             f"https://api.weather.gov/points/{lat},{lon}",
-            headers=headers,
-            timeout=5,
+            timeout=15,
+            retries=2,
         )
-        points_resp.raise_for_status()
-        points = points_resp.json()
 
         forecast_url = points["properties"]["forecast"]
 
         # 3) Get forecast
-        forecast_resp = requests.get(
+        forecast = _get_json(
             forecast_url,
-            headers=headers,
-            timeout=5,
+            timeout=15,
+            retries=2,
         )
-        forecast_resp.raise_for_status()
-        forecast = forecast_resp.json()
 
         periods = forecast["properties"]["periods"]
         if not periods:
@@ -242,8 +259,39 @@ def detect_weather_intent(text: str) -> bool:
     return any(w in t for w in ["weather", "forecast", "temperature", "rain", "snow", "wind"])
 
 def parse_weather_args(query_text: str) -> Dict[str, Any]:
-    m = re.search(r"\bweather in (.+)$", (query_text or "").lower())
-    return {"location_name": m.group(1)} if m else {}
+    """Extract a location from common weather/forecast phrasings.
+    Returns {} if no location is confidently found (caller may fall back).
+    """
+    t = (query_text or "").strip()
+    if not t:
+        return {}
+
+    # Prefer matching 'weather/forecast ... in/for <location>'
+    rx = re.compile(
+        r"\b(?:weather|forecast)\b"
+        r"(?:\s+(?:today|tonight|tomorrow|right\s+now|this\s+week|this\s+weekend))?"
+        r"\s+(?:in|for)\s+(?P<loc>.+?)"
+        r"(?:[\?\.!]\s*|\s*$)",
+        flags=re.IGNORECASE,
+    )
+    m = rx.search(t)
+
+    # Secondary fallback: allow 'in/for <location>' even without the word 'weather'
+    if not m:
+        rx2 = re.compile(
+            r"\b(?:in|for)\s+(?P<loc>[^\?\.!]+?)(?:[\?\.!]\s*|\s*$)",
+            flags=re.IGNORECASE,
+        )
+        m = rx2.search(t)
+        if not m:
+            return {}
+
+    loc = (m.group("loc") or "").strip()
+    loc = re.sub(r"\s+(?:please|thanks|thank\s+you)\s*$", "", loc, flags=re.IGNORECASE).strip()
+    loc = loc.strip('"\'').strip()
+
+    # Keep compatibility with weather_tool() which checks location OR location_name
+    return {"location": loc}
 
 
 # ============================
@@ -251,10 +299,24 @@ def parse_weather_args(query_text: str) -> Dict[str, Any]:
 # ============================
 
 def build_simple_graph(*, llm, vector_store, conv_store, persona_store, router_store):
+    executor = get_tool_executor()
     class _Graph:
         def invoke(self, state: BrainState) -> BrainState:
             text = (state.get("text") or "").strip()
             user_id = (state.get("user_id") or "ryan").strip() or "ryan"
+
+            # Phase 6.0 policy (deterministic routing + retrieval invariants)
+            policy_routing = decide_routing(text)
+            policy_retrieval = decide_retrieval(routing=policy_routing, default_collections=[])
+
+            state["policy"] = {
+                "intent": policy_routing.intent.value,
+                "volatility": policy_routing.volatility.value,
+                "expert_id": policy_routing.expert_id,
+                "tool_name": policy_routing.tool_name,
+                "use_rag": policy_retrieval.use_rag,
+                "top_k": policy_retrieval.top_k,
+            }
 
             state.update({
                 "tool": None,
@@ -263,7 +325,11 @@ def build_simple_graph(*, llm, vector_store, conv_store, persona_store, router_s
                 "tool_error": None,
             })
 
-            # Router hints
+            
+            # Phase 6.0 invariant: tool-intent bypasses RAG (force tool early)
+            if state.get("policy", {}).get("intent") == "tool" and state.get("policy", {}).get("tool_name") == "weather":
+                state["tool"] = "weather"
+# Router hints
             state["target_expert"] = router_hint_target(
                 router_store=router_store,
                 user_id=user_id,
@@ -274,7 +340,7 @@ def build_simple_graph(*, llm, vector_store, conv_store, persona_store, router_s
             persona = persona_directives(persona_store=persona_store, user_id=user_id)
 
             # Determine if this is an ephemeral tool intent (weather, etc.)
-            is_weather = detect_weather_intent(text)
+            is_weather = (state.get("tool") == "weather") or detect_weather_intent(text)
 
             # Always initialize locals so later code cannot reference undefined names
             convo_ctx = ""
@@ -294,7 +360,7 @@ def build_simple_graph(*, llm, vector_store, conv_store, persona_store, router_s
                 state["used_conversation_context"] = used_convo
 
                 try:
-                    docs = vector_store.similarity_search(text, k=3)
+                    docs = vector_store.similarity_search(text, k=int(state.get("policy", {}).get("top_k", 3)))
                 except Exception as e:
                     print(f"[Delilah Brain] qdrant lookup failed: {e}", flush=True)
                     docs = []
@@ -310,10 +376,27 @@ def build_simple_graph(*, llm, vector_store, conv_store, persona_store, router_s
                 state["tool"] = "weather"
                 state["tool_args"] = parse_weather_args(text)
 
+                # If no location was parsed, use the configured default.
+                if not state["tool_args"].get("location") and not state["tool_args"].get("location_name"):
+                    state["tool_args"]["location"] = DEFAULT_LOCATION_QUERY
+
+                trace_id = (state.get("trace_id") or "trace_missing").strip() or "trace_missing"
+
                 try:
                     started_at = datetime.now(timezone.utc)
-                    state["tool_result"] = weather_tool(state["tool_args"])
+                    req = ToolRequest(
+                        trace_id=trace_id,
+                        tool_name="weather",
+                        args=state["tool_args"],
+                        purpose="Realtime weather lookup (weather.gov)",
+                        risk_level="READ_ONLY",
+                    )
+                    res = executor.execute(req)
                     ended_at = datetime.now(timezone.utc)
+
+                    # Store full ToolResult envelope in state (standardized)
+                    state["tool_result"] = res.to_dict()
+                    state["tool_error"] = None if res.ok else res.error
 
                     # Never persist ephemeral tool calls
                     if state["tool"] not in EPHEMERAL_TOOLS:
@@ -331,8 +414,11 @@ def build_simple_graph(*, llm, vector_store, conv_store, persona_store, router_s
                     state["tool_error"] = str(e)
                     state["tool_result"] = {"ok": False, "error": str(e)}
 
+                # Build a context tool block for LLM use (if needed)
                 if (state.get("tool_result") or {}).get("ok"):
-                    tool_block = f"TOOL RESULT (Weather): {state['tool_result'].get('summary','')}"
+                    _r = (state.get("tool_result") or {}).get("result") or {}
+                    tool_block = f"TOOL RESULT (Weather): {_r.get('summary','')}"
+
 
             # Build context
             ctx_parts: List[str] = []
@@ -349,6 +435,33 @@ def build_simple_graph(*, llm, vector_store, conv_store, persona_store, router_s
             state["context"] = context
             state["used_context"] = bool(context)
             state["num_docs"] = len(docs)
+
+            # Phase 6 tool-first invariant: if a tool succeeded, return a deterministic tool answer (no LLM)
+            if state.get("tool") == "weather" and (state.get("tool_result") or {}).get("ok"):
+                tr = state.get("tool_result") or {}
+                rr = tr.get("result") or {}
+                loc = rr.get("location") or (state.get("tool_args") or {}).get("location") or ""
+                summ = (rr.get("summary") or "").strip()
+                state["answer"] = f"{loc}: {summ}" if loc else summ
+                state["source"] = "tool"
+                state["used_context"] = False
+                state["num_docs"] = 0
+                state["used_conversation_context"] = False
+                return state
+
+            # Tool intent hard-stop: if the weather tool failed, DO NOT fall back to LLM (prevents hallucinations).
+            if state.get("tool") == "weather" and (state.get("tool_result") or {}).get("ok") is False:
+                tr = state.get("tool_result") or {}
+                rr = tr.get("result") or {}
+                loc = rr.get("location") or (state.get("tool_args") or {}).get("location") or (state.get("tool_args") or {}).get("location_name") or ""
+                err = tr.get("error") or rr.get("error") or state.get("tool_error") or "weather tool failed"
+                state["answer"] = f"Weather lookup failed for {loc}: {err}" if loc else f"Weather lookup failed: {err}"
+                state["source"] = "tool_error"
+                state["used_context"] = False
+                state["num_docs"] = 0
+                state["used_conversation_context"] = False
+                return state
+
 
             # Prompt
             if context:

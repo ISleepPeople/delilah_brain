@@ -474,6 +474,13 @@ def ask(req: AskRequest):
         initial_state: BrainState = {"text": text, "user_id": user_id, "trace_id": trace_id}
         result = graph.invoke(initial_state)
 
+        # Phase 6.0: surface policy decisions from orchestrator (for observability)
+        policy = result.get("policy") or {}
+        policy_intent = policy.get("intent")
+        policy_volatility = policy.get("volatility")
+        policy_tool_name = policy.get("tool_name")
+        policy_top_k = policy.get("top_k")
+
         tool = (result.get("tool") or "").strip().lower() or None
         is_ephemeral = tool in EPHEMERAL_TOOLS if tool else False
 
@@ -498,6 +505,10 @@ def ask(req: AskRequest):
             num_docs=int(result.get("num_docs") or 0),
             target_expert=(result.get("target_expert") or "general"),
             tool=result.get("tool"),
+            policy_intent=policy_intent,
+            policy_volatility=policy_volatility,
+            policy_tool_name=policy_tool_name,
+            policy_top_k=policy_top_k,
         )
 
         if not is_ephemeral:
@@ -512,13 +523,19 @@ def ask(req: AskRequest):
                 target_expert=(result.get("target_expert") or "general"),
                 tool=result.get("tool"),
                 latency_ms=latency_ms,
-                meta={"source": "rag_llm_graph"},
+                meta={
+                    "source": result.get("source", "rag_llm_graph"),
+                    "policy_intent": policy_intent,
+                    "policy_volatility": policy_volatility,
+                    "policy_tool_name": policy_tool_name,
+                    "policy_top_k": policy_top_k,
+                },
             )
 
         return {
             "trace_id": trace_id,
             "text": answer,
-            "source": "rag_llm_graph",
+            "source": result.get("source", "rag_llm_graph"),
             "used_context": bool(result.get("used_context")),
             "num_docs": int(result.get("num_docs") or 0),
             "used_conversation_context": bool(result.get("used_conversation_context")),
