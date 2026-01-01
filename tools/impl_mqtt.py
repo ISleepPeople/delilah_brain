@@ -16,6 +16,26 @@ from typing import Any, Dict
 import os
 import time
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    v = (os.environ.get(name) or "").strip().lower()
+    if v in ("1", "true", "yes", "y", "on"):
+        return True
+    if v in ("0", "false", "no", "n", "off"):
+        return False
+    return default
+
+
+def _parse_prefixes(v: str) -> list[str]:
+    parts = [p.strip() for p in (v or "").split(",")]
+    return [p for p in parts if p]
+
+
+def _topic_allowed(topic: str, prefixes: list[str]) -> bool:
+    if not topic or not prefixes:
+        return False
+    return any(topic.startswith(p) for p in prefixes)
+
 try:
     import paho.mqtt.client as mqtt  # type: ignore
 except Exception:
@@ -34,7 +54,31 @@ def mqtt_publish(args: Dict[str, Any]) -> Dict[str, Any]:
     if not topic or payload is None:
         return {"ok": False, "error": "Missing required args: topic, payload"}
 
-    host = os.environ.get("MQTT_HOST", "127.0.0.1")
+    # --- Safety gates (Phase 6.1) ---
+    # Mutating tools must be explicitly enabled.
+    if not _env_bool("MUTATING_TOOLS_ENABLED", default=False):
+        return {"ok": False, "error": "mqtt.publish denied: MUTATING_TOOLS_ENABLED is false"}
+
+    # Dry-run by default unless explicitly overridden by args or env.
+    dry_run_default = _env_bool("DRY_RUN_DEFAULT_FOR_MUTATIONS", default=True)
+    dry_run = bool((args or {}).get("dry_run", dry_run_default))
+    # Require an allowlist of topic prefixes. If not configured, deny publishes.
+    allow_prefixes = _parse_prefixes(os.environ.get("MQTT_ALLOW_PREFIXES", ""))
+    if not _topic_allowed(str(topic), allow_prefixes):
+        return {"ok": False, "error": f"mqtt.publish denied: topic '{topic}' not allowed", "allowed_prefixes": allow_prefixes}
+
+    if dry_run:
+        return {
+            "ok": True,
+            "dry_run": True,
+            "topic": topic,
+            "payload": str(payload),
+            "qos": qos,
+            "retain": retain,
+            "summary": f"DRY_RUN mqtt.publish to {topic} (qos={qos}, retain={retain})",
+        }
+
+    host = os.environ.get("MQTT_HOST", "mqtt")
     port = int(os.environ.get("MQTT_PORT", "1883"))
     username = os.environ.get("MQTT_USERNAME")
     password = os.environ.get("MQTT_PASSWORD")

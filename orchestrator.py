@@ -327,8 +327,8 @@ def build_simple_graph(*, llm, vector_store, conv_store, persona_store, router_s
 
             
             # Phase 6.0 invariant: tool-intent bypasses RAG (force tool early)
-            if state.get("policy", {}).get("intent") == "tool" and state.get("policy", {}).get("tool_name") == "weather":
-                state["tool"] = "weather"
+            if state.get("policy", {}).get("intent") == "tool" and state.get("policy", {}).get("tool_name"):
+                state["tool"] = state.get("policy", {}).get("tool_name")
 # Router hints
             state["target_expert"] = router_hint_target(
                 router_store=router_store,
@@ -339,8 +339,11 @@ def build_simple_graph(*, llm, vector_store, conv_store, persona_store, router_s
             # Persona
             persona = persona_directives(persona_store=persona_store, user_id=user_id)
 
-            # Determine if this is an ephemeral tool intent (weather, etc.)
-            is_weather = (state.get("tool") == "weather") or detect_weather_intent(text)
+            # Determine if this is a policy tool intent (Tool APIs v1) or a heuristic weather intent (legacy)
+            policy_tool = state.get("policy", {}).get("tool_name")
+            is_tool_intent = (state.get("policy", {}).get("intent") == "tool") and bool(policy_tool)
+            # Weather can still be triggered heuristically, but policy tool-intent always bypasses RAG.
+            is_weather = ((state.get("tool") or policy_tool) == "weather") or detect_weather_intent(text)
 
             # Always initialize locals so later code cannot reference undefined names
             convo_ctx = ""
@@ -350,7 +353,7 @@ def build_simple_graph(*, llm, vector_store, conv_store, persona_store, router_s
 
             # Conversation memory (Policy B) + Knowledge base RAG
             # For weather (and other ephemeral tools), DO NOT pull conversation memory or KB RAG.
-            if not is_weather:
+            if (not is_tool_intent) and (not is_weather):
                 convo_ctx, used_convo = retrieve_conversation_context_if_relevant(
                     conv_store=conv_store,
                     user_id=user_id,
@@ -372,52 +375,109 @@ def build_simple_graph(*, llm, vector_store, conv_store, persona_store, router_s
 
             # Tooling
             tool_block = ""
-            if is_weather:
-                state["tool"] = "weather"
-                state["tool_args"] = parse_weather_args(text)
-
-                # If no location was parsed, use the configured default.
-                if not state["tool_args"].get("location") and not state["tool_args"].get("location_name"):
-                    state["tool_args"]["location"] = DEFAULT_LOCATION_QUERY
-
+            if is_tool_intent or is_weather:
+                # Choose tool deterministically
+                tool_name = state.get("tool") or (policy_tool if is_tool_intent else "weather")
+                state["tool"] = tool_name
+                # Phase 6.1: target_expert must follow tool_name for tool intents (prevents router_hint bleed-through)
+                if tool_name == "weather":
+                    state["target_expert"] = "weather"
+                elif isinstance(tool_name, str) and tool_name.startswith("system."):
+                    state["target_expert"] = "system"
+                elif isinstance(tool_name, str) and tool_name.startswith("mqtt."):
+                    state["target_expert"] = "mqtt"
+                else:
+                    state["target_expert"] = state.get("target_expert") or "general"
                 trace_id = (state.get("trace_id") or "trace_missing").strip() or "trace_missing"
 
                 try:
                     started_at = datetime.now(timezone.utc)
-                    req = ToolRequest(
-                        trace_id=trace_id,
-                        tool_name="weather",
-                        args=state["tool_args"],
-                        purpose="Realtime weather lookup (weather.gov)",
-                        risk_level="READ_ONLY",
-                    )
-                    res = executor.execute(req)
-                    ended_at = datetime.now(timezone.utc)
 
-                    # Store full ToolResult envelope in state (standardized)
-                    state["tool_result"] = res.to_dict()
-                    state["tool_error"] = None if res.ok else res.error
-
-                    # Never persist ephemeral tool calls
-                    if state["tool"] not in EPHEMERAL_TOOLS:
-                        log_tool_call(
-                            trace_id=state.get("trace_id"),
-                            user_id=user_id,
-                            tool=state["tool"],
+                    # Build tool args + ToolRequest
+                    req = None
+                    if tool_name == "weather":
+                        state["tool_args"] = parse_weather_args(text)
+                        if not state["tool_args"].get("location") and not state["tool_args"].get("location_name"):
+                            state["tool_args"]["location"] = DEFAULT_LOCATION_QUERY
+                        req = ToolRequest(
+                            trace_id=trace_id,
+                            tool_name="weather",
                             args=state["tool_args"],
-                            result=state["tool_result"],
-                            started_at=started_at,
-                            ended_at=ended_at,
+                            purpose="Realtime weather lookup (weather.gov)",
+                            risk_level="READ_ONLY",
                         )
+                    elif tool_name == "system.health_check":
+                        state["tool_args"] = {}
+                        req = ToolRequest(
+                            trace_id=trace_id,
+                            tool_name="system.health_check",
+                            args=state["tool_args"],
+                            purpose="Local system health check",
+                            risk_level="READ_ONLY",
+                        )
+                    elif tool_name == "system.get_versions":
+                        state["tool_args"] = {}
+                        req = ToolRequest(
+                            trace_id=trace_id,
+                            tool_name="system.get_versions",
+                            args=state["tool_args"],
+                            purpose="Return running component versions",
+                            risk_level="READ_ONLY",
+                        )
+                    elif tool_name == "mqtt.publish":
+                        import re as _re
+                        t = text or ""
+                        mt = _re.search(r"(?:topic\s*:?\s*)([A-Za-z0-9_\-\/\.]+)", t, flags=_re.IGNORECASE)
+                        mp = _re.search(r"(?:payload\s*:?\s*)(.+)$", t, flags=_re.IGNORECASE)
+                        state["tool_args"] = {}
+                        if mt:
+                            state["tool_args"]["topic"] = mt.group(1)
+                        if mp:
+                            state["tool_args"]["payload"] = mp.group(1).strip()
+                        if not state["tool_args"].get("topic") or not state["tool_args"].get("payload"):
+                            state["tool_result"] = {"ok": False, "error": "mqtt.publish requires topic and payload", "result": {"tool": "mqtt.publish"}}
+                            state["tool_error"] = state["tool_result"]["error"]
+                            req = None
+                        else:
+                            req = ToolRequest(
+                                trace_id=trace_id,
+                                tool_name="mqtt.publish",
+                                args=state["tool_args"],
+                                purpose="Publish MQTT message (explicit user request)",
+                                risk_level="WRITE",
+                            )
+                    else:
+                        state["tool_args"] = {}
+                        state["tool_result"] = {"ok": False, "error": f"unknown tool: {tool_name}", "result": {"tool": tool_name}}
+                        state["tool_error"] = state["tool_result"]["error"]
+                        req = None
+
+                    if req is not None:
+                        res = executor.execute(req)
+                        ended_at = datetime.now(timezone.utc)
+                        state["tool_result"] = res.to_dict()
+                        state["tool_error"] = None if res.ok else res.error
+
+                        # Never persist ephemeral tools
+                        if state["tool"] not in EPHEMERAL_TOOLS:
+                            log_tool_call(
+                                trace_id=state.get("trace_id"),
+                                user_id=user_id,
+                                tool=state["tool"],
+                                args=state["tool_args"],
+                                result=state["tool_result"],
+                                started_at=started_at,
+                                ended_at=ended_at,
+                            )
 
                 except Exception as e:
                     state["tool_error"] = str(e)
-                    state["tool_result"] = {"ok": False, "error": str(e)}
+                    state["tool_result"] = {"ok": False, "error": str(e), "result": {"tool": state.get("tool")}}
 
                 # Build a context tool block for LLM use (if needed)
                 if (state.get("tool_result") or {}).get("ok"):
                     _r = (state.get("tool_result") or {}).get("result") or {}
-                    tool_block = f"TOOL RESULT (Weather): {_r.get('summary','')}"
+                    tool_block = f"TOOL RESULT ({state.get('tool')}): {_r.get('summary','')}"
 
 
             # Build context
@@ -437,25 +497,33 @@ def build_simple_graph(*, llm, vector_store, conv_store, persona_store, router_s
             state["num_docs"] = len(docs)
 
             # Phase 6 tool-first invariant: if a tool succeeded, return a deterministic tool answer (no LLM)
-            if state.get("tool") == "weather" and (state.get("tool_result") or {}).get("ok"):
+            if state.get("tool") and (state.get("tool_result") or {}).get("ok"):
+                tool = state.get("tool")
                 tr = state.get("tool_result") or {}
                 rr = tr.get("result") or {}
-                loc = rr.get("location") or (state.get("tool_args") or {}).get("location") or ""
                 summ = (rr.get("summary") or "").strip()
-                state["answer"] = f"{loc}: {summ}" if loc else summ
+                if tool == "weather":
+                    loc = rr.get("location") or (state.get("tool_args") or {}).get("location") or ""
+                    state["answer"] = f"{loc}: {summ}" if loc else summ
+                else:
+                    state["answer"] = summ or str(rr)
                 state["source"] = "tool"
                 state["used_context"] = False
                 state["num_docs"] = 0
                 state["used_conversation_context"] = False
                 return state
 
-            # Tool intent hard-stop: if the weather tool failed, DO NOT fall back to LLM (prevents hallucinations).
-            if state.get("tool") == "weather" and (state.get("tool_result") or {}).get("ok") is False:
+            # Tool intent hard-stop: if a tool failed, DO NOT fall back to LLM (prevents hallucinations).
+            if state.get("tool") and (state.get("tool_result") or {}).get("ok") is False:
+                tool = state.get("tool")
                 tr = state.get("tool_result") or {}
                 rr = tr.get("result") or {}
-                loc = rr.get("location") or (state.get("tool_args") or {}).get("location") or (state.get("tool_args") or {}).get("location_name") or ""
-                err = tr.get("error") or rr.get("error") or state.get("tool_error") or "weather tool failed"
-                state["answer"] = f"Weather lookup failed for {loc}: {err}" if loc else f"Weather lookup failed: {err}"
+                err = tr.get("error") or rr.get("error") or state.get("tool_error") or "tool failed"
+                if tool == "weather":
+                    loc = rr.get("location") or (state.get("tool_args") or {}).get("location") or (state.get("tool_args") or {}).get("location_name") or ""
+                    state["answer"] = f"Weather lookup failed for {loc}: {err}" if loc else f"Weather lookup failed: {err}"
+                else:
+                    state["answer"] = f"{tool} failed: {err}"
                 state["source"] = "tool_error"
                 state["used_context"] = False
                 state["num_docs"] = 0

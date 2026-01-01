@@ -72,19 +72,41 @@ class WritebackDecision:
 _WEATHER_WORDS = ("weather", "forecast", "temperature", "rain", "snow", "wind")
 _TIME_VOLATILE_WORDS = ("today", "tonight", "right now", "current", "latest", "score", "prices", "stock", "stocks")
 
+# Tool name classifier (Tool APIs v1)
+# Note: we keep this deterministic and conservative to avoid side-effects.
+def classify_tool_name(text: str) -> Optional[str]:
+    t = (text or "").lower()
+
+    # Weather tool
+    if any(w in t for w in _WEATHER_WORDS):
+        return "weather"
+
+    # System tools
+    # - "health check" / "status" => system.health_check
+    # - "versions" / "what versions" => system.get_versions
+    if any(p in t for p in ["health check", "healthcheck", "system status", "service status", "status check", "uptime"]):
+        return "system.health_check"
+    if any(p in t for p in ["what version", "versions", "version info", "build info", "what are you running"]):
+        return "system.get_versions"
+
+    # MQTT publish tool (only if user explicitly mentions topic to avoid unintended publishes)
+    if "mqtt" in t and ("topic " in t or "topic:" in t):
+        return "mqtt.publish"
+    if "publish" in t and ("topic " in t or "topic:" in t):
+        return "mqtt.publish"
+
+    return None
+
 
 def classify_intent(text: str) -> Intent:
-    t = (text or "").lower()
-    # v0: only weather is a tool intent in the baseline
-    if any(w in t for w in _WEATHER_WORDS):
-        return Intent.TOOL
-    return Intent.KNOWLEDGE
+    # Tool intent iff we can deterministically name the tool.
+    return Intent.TOOL if classify_tool_name(text) else Intent.KNOWLEDGE
 
 
 def classify_volatility(text: str) -> Volatility:
     t = (text or "").lower()
-    # v0: weather + explicit time-sensitive phrasing are volatile
-    if any(w in t for w in _WEATHER_WORDS):
+    # Any tool intent is treated as volatile (no writeback).
+    if classify_tool_name(text):
         return Volatility.VOLATILE
     if any(w in t for w in _TIME_VOLATILE_WORDS):
         return Volatility.VOLATILE
@@ -124,8 +146,11 @@ def decide_routing(text: str) -> RoutingPlan:
     vol = classify_volatility(text)
 
     if intent == Intent.TOOL:
-        # v0: route weather to tool layer; expert remains "general" for now
-        return RoutingPlan(intent=intent, volatility=vol, expert_id="general", tool_name="weather")
+        tool = classify_tool_name(text)
+        if not tool:
+            # Defensive: should not happen because classify_intent depends on tool_name.
+            return RoutingPlan(intent=Intent.KNOWLEDGE, volatility=vol, expert_id="general", tool_name=None)
+        return RoutingPlan(intent=intent, volatility=vol, expert_id="general", tool_name=tool)
 
     return RoutingPlan(intent=intent, volatility=vol, expert_id="general", tool_name=None)
 

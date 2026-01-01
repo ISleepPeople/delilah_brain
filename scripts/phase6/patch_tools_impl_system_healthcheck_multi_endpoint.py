@@ -1,53 +1,41 @@
-"""
-System tool implementations (Phase 6.1 Tool APIs v1).
-
-These are intentionally conservative:
-- health_check: shallow checks only (HTTP/TCP), no side effects
-- get_versions: report runtime versions, no shelling out
-- snapshot_capture: write a small snapshot bundle to recovery/ (READ_ONLY from services; writes files locally)
-"""
-
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
-import os
-import platform
-import socket
-import time
 from pathlib import Path
+import time
+import py_compile
+import sys
 
-try:
-    import requests  # type: ignore
-except Exception:
-    requests = None  # noqa: N816
+FILE = Path("/home/dad/delilah_workspace/tools/impl_system.py")
+BACKUP_DIR = Path("/home/dad/delilah_workspace/backups/phase6")
 
+def die(msg: str) -> None:
+    print(f"PATCH ERROR: {msg}", file=sys.stderr)
+    raise SystemExit(1)
 
-def _tcp_check(host: str, port: int, timeout_s: float = 1.5) -> Dict[str, Any]:
-    started = time.time()
-    try:
-        with socket.create_connection((host, port), timeout=timeout_s):
-            return {"ok": True, "host": host, "port": port, "latency_ms": int((time.time() - started) * 1000)}
-    except Exception as e:
-        return {"ok": False, "host": host, "port": port, "error": str(e)}
+def main() -> None:
+    if not FILE.exists():
+        die(f"missing {FILE}")
 
+    src = FILE.read_text(errors="replace")
 
-def _http_check(url: str, timeout_s: float = 2.5) -> Dict[str, Any]:
-    if requests is None:
-        return {"ok": False, "url": url, "error": "requests not installed"}
-    started = time.time()
-    try:
-        r = requests.get(url, timeout=timeout_s)
-        return {
-            "ok": r.status_code < 500,
-            "url": url,
-            "status_code": r.status_code,
-            "latency_ms": int((time.time() - started) * 1000),
-        }
-    except Exception as e:
-        return {"ok": False, "url": url, "error": str(e)}
+    # Anchor 1: insert helper functions after _http_check
+    anchor_http = "def _http_check(url: str, timeout_s: float = 2.5) -> Dict[str, Any]:\n"
+    if anchor_http not in src:
+        die("missing anchor: _http_check()")
 
+    if "def _default_gateway_ip() -> Optional[str]:" in src:
+        print("PATCH OK: multi-endpoint helpers already present; no changes.")
+        raise SystemExit(0)
 
+    insert_after_http_end = None
+    # Find end of _http_check by locating the next blank line + 'def system_health_check'
+    idx = src.find(anchor_http)
+    next_def = src.find("\n\ndef system_health_check", idx)
+    if next_def == -1:
+        die("could not find system_health_check() after _http_check()")
+    insert_after_http_end = next_def + 2  # keep one blank line before helpers
 
+    helpers = '''
 def _default_gateway_ip() -> Optional[str]:
     """
     Best-effort Docker gateway detection for Linux containers.
@@ -101,7 +89,37 @@ def _http_check_any(urls: list[str], timeout_s: float = 2.5) -> Dict[str, Any]:
     out["tried"] = tried
     return out
 
-def system_health_check(args: Dict[str, Any]) -> Dict[str, Any]:
+'''
+
+    src = src[:insert_after_http_end] + helpers + src[insert_after_http_end:]
+
+    # Anchor 2: replace the system_health_check body (minimal, deterministic)
+    old_block = '''def system_health_check(args: Dict[str, Any]) -> Dict[str, Any]:
+    # Default addresses (can be overridden later via config/env)
+    brain_url = os.environ.get("DELILAH_BRAIN_URL", "http://127.0.0.1:8800/health")
+    qdrant_url = os.environ.get("QDRANT_URL", "http://127.0.0.1:6333/healthz")
+
+    # These ports are common defaults; if you use different ones, we can wire from env later.
+    postgres_host = os.environ.get("POSTGRES_HOST", "127.0.0.1")
+    postgres_port = int(os.environ.get("POSTGRES_PORT", "5432"))
+    n8n_host = os.environ.get("N8N_HOST", "127.0.0.1")
+    n8n_port = int(os.environ.get("N8N_PORT", "5678"))
+
+    out: Dict[str, Any] = {
+        "brain": _http_check(brain_url),
+        "qdrant": _http_check(qdrant_url),
+        "postgres": _tcp_check(postgres_host, postgres_port),
+        "n8n": _tcp_check(n8n_host, n8n_port),
+    }
+
+    # overall ok if brain and qdrant ok; postgres/n8n can be optional in early phases
+    out["ok"] = bool(out["brain"].get("ok")) and bool(out["qdrant"].get("ok"))
+    return out
+'''
+    if old_block not in src:
+        die("system_health_check block does not match expected text; aborting to avoid a bad patch")
+
+    new_block = '''def system_health_check(args: Dict[str, Any]) -> Dict[str, Any]:
     """
     Health checks are shallow (HTTP/TCP) and conservative.
 
@@ -146,55 +164,22 @@ def system_health_check(args: Dict[str, Any]) -> Dict[str, Any]:
     # overall ok if brain and qdrant ok; postgres/n8n remain non-blocking in Phase 6
     out["ok"] = bool(out["brain"].get("ok")) and bool(out["qdrant"].get("ok"))
     return out
+'''
+    src = src.replace(old_block, new_block, 1)
 
+    tmp = FILE.with_suffix(".py.new")
+    tmp.write_text(src)
+    py_compile.compile(str(tmp), doraise=True)
 
-def system_get_versions(args: Dict[str, Any]) -> Dict[str, Any]:
-    return {
-        "python": platform.python_version(),
-        "platform": platform.platform(),
-        "hostname": platform.node(),
-        "app_env": {
-            "DELILAH_GIT_SHA": os.environ.get("DELILAH_GIT_SHA"),
-            "DELILAH_ENV": os.environ.get("DELILAH_ENV"),
-        },
-    }
-
-
-def system_snapshot_capture(args: Dict[str, Any]) -> Dict[str, Any]:
-    label = (args or {}).get("label") or "snapshot"
+    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     ts = time.strftime("%Y%m%d_%H%M%SZ", time.gmtime())
-    root = Path("/home/dad/delilah_workspace")
-    out_dir = root / "recovery" / f"phase6_snapshot_{label}_{ts}"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    backup = BACKUP_DIR / f"impl_system.py.pre_healthcheck_multi_endpoint.{ts}.bak"
+    backup.write_text(FILE.read_text(errors="replace"))
 
-    # Minimal, non-secret snapshot targets (extend later)
-    targets = [
-        root / "docker-compose.yml",
-        root / "docker-compose.delilah_infra.yml",
-        root / "requirements.delilah_brain_v2.txt",
-        root / "PROJECT_STATE.md",
-        root / "ARCHETECTURAL_DECISIONS.md",
-        root / "README_LLM.md",
-        root / "RULES.MD",
-    ]
+    FILE.write_text(src)
+    tmp.unlink(missing_ok=True)
 
-    copied = []
-    missing = []
-    for p in targets:
-        if p.exists():
-            dest = out_dir / p.name
-            dest.write_bytes(p.read_bytes())
-            copied.append(str(dest))
-        else:
-            missing.append(str(p))
+    print(f"PATCH OK: system_health_check now uses multi-endpoint targets (backup: {backup})")
 
-    # Capture versions inline
-    (out_dir / "versions.json").write_text(str(system_get_versions({})))
-
-    return {
-        "ok": True,
-        "label": label,
-        "path": str(out_dir),
-        "copied": copied,
-        "missing": missing,
-    }
+if __name__ == "__main__":
+    main()

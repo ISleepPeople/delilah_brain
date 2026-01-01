@@ -436,6 +436,37 @@ Implement known-good snapshot capture CLI (manual)
 
 Verify snapshot capture ingests bundles and queries return captured outputs + timestamps
 
+#### Tool Output Persistence Policy (Locked: D6.1.TOOLSTATE Option A)
+Purpose: prevent stale “state” from polluting long-term retrieval and causing incorrect answers.
+
+**Hard rules**
+1) **Tool outputs are NEVER written to RAG by default.**
+2) **Volatile tool state** (e.g., which lights are on, current temperatures, device availability, “what’s playing”) must:
+   - be obtained via tool calls (authoritative)
+   - optionally be stored only in a **TTL cache** (ephemeral) for latency reduction
+   - NEVER be embedded into any Qdrant collection
+
+3) **Stable tool-derived configuration** (e.g., entity registry, room mappings, friendly names, default scenes) must:
+   - be stored as **structured data in Postgres** (system-of-record)
+   - be updated transactionally when configs change
+   - be retrieved deterministically (not via semantic search)
+
+4) **Durable “preference-like” insights** (e.g., “warm lighting in evenings”) are NOT implemented in Phase 6 write-back.
+   - Future only: may be stored via a curator process into structured prefs (Postgres) and/or a small curated semantic store if explicitly enabled later.
+
+**TTL Cache Implementation (Phase 6)**
+- Implement an in-orchestrator or Postgres-backed cache table with TTL:
+  - Default TTL for state queries: 10–60 seconds
+  - Cache key includes: tool_name + normalized args + user_id + house_mode (if applicable)
+- Cache must be bypassable via an explicit “refresh” flag.
+
+**Regression Tests (must add to Phase 6.0 harness)**
+- Any tool result classified as volatile MUST:
+  - not trigger any Qdrant upsert
+  - not appear in write-back workflows
+- A deny-test must prove that “lights on/off” results cannot be persisted to RAG.
+
+
 5) Phase 6.2 — Persona v1 + situational style (Option C)
 5.1 Postgres tables for persona preferences
 
@@ -791,6 +822,36 @@ If the orchestrator generates sub-queries (even if not executed in parallel yet)
 Acceptance Criteria
 - Trace schema supports N subtasks per user turn.
 - Subtask metadata is queryable for debugging and future training (router + decomposition).
+
+#### Tool Output Persistence Policy (Locked: D6.1.TOOLSTATE Option A)
+Purpose: prevent stale “state” from polluting long-term retrieval and causing incorrect answers.
+
+**Hard rules**
+1) **Tool outputs are NEVER written to RAG by default.**
+2) **Volatile tool state** (e.g., which lights are on, current temperatures, device availability, “what’s playing”) must:
+   - be obtained via tool calls (authoritative)
+   - optionally be stored only in a **TTL cache** (ephemeral) for latency reduction
+   - NEVER be embedded into any Qdrant collection
+
+3) **Stable tool-derived configuration** (e.g., entity registry, room mappings, friendly names, default scenes) must:
+   - be stored as **structured data in Postgres** (system-of-record)
+   - be updated transactionally when configs change
+   - be retrieved deterministically (not via semantic search)
+
+4) **Durable “preference-like” insights** (e.g., “warm lighting in evenings”) are NOT implemented in Phase 6 write-back.
+   - Future only: may be stored via a curator process into structured prefs (Postgres) and/or a small curated semantic store if explicitly enabled later.
+
+**TTL Cache Implementation (Phase 6)**
+- Implement an in-orchestrator or Postgres-backed cache table with TTL:
+  - Default TTL for state queries: 10–60 seconds
+  - Cache key includes: tool_name + normalized args + user_id + house_mode (if applicable)
+- Cache must be bypassable via an explicit “refresh” flag.
+
+**Regression Tests (must add to Phase 6.0 harness)**
+- Any tool result classified as volatile MUST:
+  - not trigger any Qdrant upsert
+  - not appear in write-back workflows
+- A deny-test must prove that “lights on/off” results cannot be persisted to RAG.
 
 
 9.2 Verification
