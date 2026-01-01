@@ -261,6 +261,9 @@ def detect_weather_intent(text: str) -> bool:
 def parse_weather_args(query_text: str) -> Dict[str, Any]:
     """Extract a location from common weather/forecast phrasings.
     Returns {} if no location is confidently found (caller may fall back).
+    Supports:
+      - "weather in <location>" / "forecast for <location>"
+      - "weather <location>" / "forecast <location>" (common shorthand)
     """
     t = (query_text or "").strip()
     if not t:
@@ -283,14 +286,31 @@ def parse_weather_args(query_text: str) -> Dict[str, Any]:
             flags=re.IGNORECASE,
         )
         m = rx2.search(t)
+
+    # Tertiary fallback: "weather <location>" / "forecast <location>" / "temperature <location>"
+    if not m:
+        rx3 = re.compile(
+            r"^\s*(?:what\s*\'?s\s+the\s+)?(?:weather|forecast|temperature)\b\s*[:\-]?\s+(?P<loc>.+?)\s*$",
+            flags=re.IGNORECASE,
+        )
+        m = rx3.search(t)
         if not m:
+            return {}
+
+        candidate = (m.group("loc") or "").strip()
+        # Avoid false positives like "weather tomorrow"
+        cand_l = candidate.lower().strip()
+        temporal = [
+            "today", "tonight", "tomorrow", "right now", "now",
+            "this week", "this weekend", "later", "next week",
+        ]
+        if any(cand_l == x or cand_l.startswith(x + " ") for x in temporal):
             return {}
 
     loc = (m.group("loc") or "").strip()
     loc = re.sub(r"\s+(?:please|thanks|thank\s+you)\s*$", "", loc, flags=re.IGNORECASE).strip()
-    loc = loc.strip('"\'').strip()
+    loc = loc.strip(" \"'")
 
-    # Keep compatibility with weather_tool() which checks location OR location_name
     return {"location": loc}
 
 
@@ -397,6 +417,14 @@ def build_simple_graph(*, llm, vector_store, conv_store, persona_store, router_s
                     req = None
                     if tool_name == "weather":
                         state["tool_args"] = parse_weather_args(text)
+                        # Phase 6.x: weather arg parsing fallback (handles shorthand like 'weather san juan pr')
+                        if not state.get("tool_args"):
+                            state["tool_args"] = {}
+                        if not state["tool_args"].get("location") and not state["tool_args"].get("location_name"):
+                            parsed = parse_weather_args(text)
+                            for k, v in (parsed or {}).items():
+                                if v and not state["tool_args"].get(k):
+                                    state["tool_args"][k] = v
                         if not state["tool_args"].get("location") and not state["tool_args"].get("location_name"):
                             state["tool_args"]["location"] = DEFAULT_LOCATION_QUERY
                         req = ToolRequest(
