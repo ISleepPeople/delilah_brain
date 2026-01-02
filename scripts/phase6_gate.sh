@@ -3,5 +3,5 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-source .venv/bin/activate
-python -m pytest -q tests/phase6
+VENV_BIN="$(pwd)/.venv/bin"
+"$VENV_BIN/pytest" -q tests/phase6
