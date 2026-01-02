@@ -29,3 +29,15 @@ def test_redaction_runs_and_masks_common_patterns():
     assert "[REDACTED]" in redacted
     assert report.redacted is True
     assert ("email" in report.patterns) or ("ipv4" in report.patterns)
+
+def test_weather_shorthand_classifies_weather():
+    # Shorthand that previously fell through routing
+    from policy.policy import classify_tool_name
+    assert classify_tool_name("weather San Juan, PR") == "weather"
+
+
+def test_mqtt_publish_classifies_mqtt_publish():
+    # Guard against false-positive weather routing: "brain" contains "rain"
+    from policy.policy import classify_tool_name
+    assert classify_tool_name("mqtt publish topic: delilah/test payload: hello-from-env-brain") == "mqtt.publish"
+
