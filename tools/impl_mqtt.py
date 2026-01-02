@@ -56,16 +56,33 @@ def mqtt_publish(args: Dict[str, Any]) -> Dict[str, Any]:
 
     # --- Safety gates (Phase 6.1) ---
     # Mutating tools must be explicitly enabled.
-    if not _env_bool("MUTATING_TOOLS_ENABLED", default=False):
-        return {"ok": False, "error": "mqtt.publish denied: MUTATING_TOOLS_ENABLED is false"}
+    enable_mutations = _env_bool(
+        "DELILAH_MQTT_ENABLE_MUTATIONS",
+        default=_env_bool("MUTATING_TOOLS_ENABLED", default=False),
+    )
+    if not enable_mutations:
+        return {
+            "ok": False,
+            "error": "mqtt.publish denied: mutations disabled (DELILAH_MQTT_ENABLE_MUTATIONS/MUTATING_TOOLS_ENABLED)",
+        }
 
     # Dry-run by default unless explicitly overridden by args or env.
-    dry_run_default = _env_bool("DRY_RUN_DEFAULT_FOR_MUTATIONS", default=True)
+    dry_run_default = _env_bool(
+        "DELILAH_MQTT_DRY_RUN",
+        default=_env_bool("DRY_RUN_DEFAULT_FOR_MUTATIONS", default=True),
+    )
     dry_run = bool((args or {}).get("dry_run", dry_run_default))
+
     # Require an allowlist of topic prefixes. If not configured, deny publishes.
-    allow_prefixes = _parse_prefixes(os.environ.get("MQTT_ALLOW_PREFIXES", ""))
+    allow_prefixes = _parse_prefixes(
+        os.environ.get("DELILAH_MQTT_ALLOWLIST", os.environ.get("MQTT_ALLOW_PREFIXES", ""))
+    )
     if not _topic_allowed(str(topic), allow_prefixes):
-        return {"ok": False, "error": f"mqtt.publish denied: topic '{topic}' not allowed", "allowed_prefixes": allow_prefixes}
+        return {
+            "ok": False,
+            "error": f"mqtt.publish denied: topic '{topic}' not allowed",
+            "allowed_prefixes": allow_prefixes,
+        }
 
     if dry_run:
         return {

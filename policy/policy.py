@@ -78,6 +78,23 @@ _TIME_VOLATILE_WORDS = ("today", "tonight", "right now", "current", "latest", "s
 def classify_tool_name(text: str) -> Optional[str]:
     t = (text or "").lower()
 
+    # Explicit Tool APIs v1 invocation: 'tool <tool_name> ...'
+    # Keep deterministic and conservative.
+    if t.startswith("tool "):
+        rest = t[5:].strip()
+        for name in ("system.health_check", "system.get_versions", "weather", "mqtt.publish"):
+            if rest == name or rest.startswith(name + " "):
+                return name
+
+    # Also accept direct dotted tool mentions (e.g., 'system.health_check').
+    if "system.health_check" in t:
+        return "system.health_check"
+    if "system.get_versions" in t:
+        return "system.get_versions"
+    if "mqtt.publish" in t:
+        return "mqtt.publish"
+
+
     # Weather tool
     # Weather tool (match whole words only; avoid false positives like "brain" -> "rain")
     if re.search(r"\b(?:weather|forecast|temperature|rain|snow|wind)\b", t, flags=re.IGNORECASE):
