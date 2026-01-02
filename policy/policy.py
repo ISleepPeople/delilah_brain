@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional, Tuple
 import re
+import re
 
 
 # ============================
@@ -78,7 +79,8 @@ def classify_tool_name(text: str) -> Optional[str]:
     t = (text or "").lower()
 
     # Weather tool
-    if any(w in t for w in _WEATHER_WORDS):
+    # Weather tool (match whole words only; avoid false positives like "brain" -> "rain")
+    if re.search(r"\b(?:weather|forecast|temperature|rain|snow|wind)\b", t, flags=re.IGNORECASE):
         return "weather"
 
     # System tools
