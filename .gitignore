@@ -30,3 +30,6 @@ Thumbs.db
 .vscode/
 .idea/
 orchestrator.py.bak.*
+
+# Generated backups (do not commit)
+backups/postgres/
