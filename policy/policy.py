@@ -94,6 +94,20 @@ def classify_tool_name(text: str) -> Optional[str]:
     if "mqtt.publish" in t:
         return "mqtt.publish"
 
+    # MQTT publish tool (prioritized to avoid payload words like 'healthcheck' hijacking routing)
+    # Supports:
+    # - 'mqtt publish topic: <topic> payload: <payload>'
+    # - 'mqtt publish <topic> <payload...>' (shorthand)
+    if t.startswith("mqtt publish "):
+        rest = t[len("mqtt publish "):].strip()
+        if ("topic:" in rest) or ("topic " in rest):
+            return "mqtt.publish"
+        if len(rest.split()) >= 2:
+            return "mqtt.publish"
+    if "mqtt" in t and ("topic " in t or "topic:" in t):
+        return "mqtt.publish"
+
+
 
     # Weather tool
     # Weather tool (match whole words only; avoid false positives like "brain" -> "rain")
@@ -108,11 +122,7 @@ def classify_tool_name(text: str) -> Optional[str]:
     if any(p in t for p in ["what version", "versions", "version info", "build info", "what are you running"]):
         return "system.get_versions"
 
-    # MQTT publish tool (only if user explicitly mentions topic to avoid unintended publishes)
-    if "mqtt" in t and ("topic " in t or "topic:" in t):
-        return "mqtt.publish"
-    if "publish" in t and ("topic " in t or "topic:" in t):
-        return "mqtt.publish"
+    # MQTT publish tool handled above (prioritized).
 
     return None
 

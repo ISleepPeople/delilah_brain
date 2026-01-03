@@ -45,3 +45,14 @@ def test_explicit_tool_prefix_system_health_check():
     from policy.policy import classify_tool_name
     assert classify_tool_name("tool system.health_check") == "system.health_check"
 
+def test_mqtt_publish_labeled_routes_to_mqtt():
+    from policy.policy import classify_tool_name
+    assert classify_tool_name("mqtt publish topic: delilah/test payload: hello") == "mqtt.publish"
+
+def test_mqtt_publish_shorthand_routes_to_mqtt():
+    from policy.policy import classify_tool_name
+    assert classify_tool_name("mqtt publish delilah/test hello") == "mqtt.publish"
+
+def test_mqtt_payload_healthcheck_does_not_hijack_routing():
+    from policy.policy import classify_tool_name
+    assert classify_tool_name("mqtt publish topic: delilah/test payload: healthcheck") == "mqtt.publish"
