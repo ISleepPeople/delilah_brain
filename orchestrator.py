@@ -454,14 +454,30 @@ def build_simple_graph(*, llm, vector_store, conv_store, persona_store, router_s
                         )
                     elif tool_name == "mqtt.publish":
                         import re as _re
-                        t = text or ""
+                        t = (text or "").strip()
+
+                        state["tool_args"] = {}
+
+                        # Labeled form: topic:/payload:
                         mt = _re.search(r"(?:topic\s*:?\s*)([A-Za-z0-9_\-\/\.]+)", t, flags=_re.IGNORECASE)
                         mp = _re.search(r"(?:payload\s*:?\s*)(.+)$", t, flags=_re.IGNORECASE)
-                        state["tool_args"] = {}
                         if mt:
                             state["tool_args"]["topic"] = mt.group(1)
                         if mp:
                             state["tool_args"]["payload"] = mp.group(1).strip()
+
+                        # Shorthand form: mqtt publish <topic> <payload...>
+                        # Example: "mqtt publish delilah/test hello"
+                        if (not state["tool_args"].get("topic")) or (state["tool_args"].get("payload") is None):
+                            ms = _re.match(
+                                r"^\s*mqtt\s+publish\s+(?P<topic>[A-Za-z0-9_\-\/\.]+)\s+(?P<payload>.+?)\s*$",
+                                t,
+                                flags=_re.IGNORECASE,
+                            )
+                            if ms:
+                                state["tool_args"].setdefault("topic", ms.group("topic"))
+                                if state["tool_args"].get("payload") is None:
+                                    state["tool_args"]["payload"] = (ms.group("payload") or "").strip()
                         if not state["tool_args"].get("topic") or not state["tool_args"].get("payload"):
                             state["tool_result"] = {"ok": False, "error": "mqtt.publish requires topic and payload", "result": {"tool": "mqtt.publish"}}
                             state["tool_error"] = state["tool_result"]["error"]
